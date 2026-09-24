@@ -26,5 +26,13 @@ cat > "$AGENT" <<PLIST
 PLIST
 
 launchctl bootout "gui/$UID_VALUE/com.chen.dualtime" 2>/dev/null || true
-launchctl bootstrap "gui/$UID_VALUE" "$AGENT"
+for attempt in 1 2 3; do
+  if launchctl bootstrap "gui/$UID_VALUE" "$AGENT"; then
+    break
+  fi
+  if [[ $attempt == 3 ]]; then
+    exit 1
+  fi
+  sleep 1
+done
 echo "Installed: $APP_DEST"

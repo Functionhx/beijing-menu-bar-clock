@@ -6,6 +6,7 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
+    private let managedAppsMenu = NSMenu()
     private let settings = ClockSettings.shared
     private let speech = AVSpeechSynthesizer()
     private var timer: Timer?
@@ -26,6 +27,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         startTimer()
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showSettings()
+        return true
+    }
+
     private func configureStatusItem() {
         guard let button = statusItem.button else { return }
         button.toolTip = "菜单栏时钟"
@@ -39,6 +45,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let options = NSMenuItem(title: "时钟选项…", action: #selector(showSettings), keyEquivalent: ",")
         options.target = self
         menu.addItem(options)
+
+        let managedApps = NSMenuItem(title: "按指定时区打开", action: nil, keyEquivalent: "")
+        managedApps.submenu = managedAppsMenu
+        menu.addItem(managedApps)
 
         let refresh = NSMenuItem(title: "刷新", action: #selector(refreshNow), keyEquivalent: "r")
         refresh.target = self
@@ -133,6 +143,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         updateClock()
+        rebuildManagedAppsMenu()
+    }
+
+    private func rebuildManagedAppsMenu() {
+        managedAppsMenu.removeAllItems()
+        if settings.managedTimeZoneApps.isEmpty {
+            let empty = NSMenuItem(title: "尚未添加应用", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            managedAppsMenu.addItem(empty)
+        } else {
+            for app in settings.managedTimeZoneApps {
+                let item = NSMenuItem(
+                    title: "\(app.displayName) · \(shortTimeZoneName(app.timeZoneIdentifier))",
+                    action: #selector(openManagedApplication(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.representedObject = app.id.uuidString
+                item.image = NSWorkspace.shared.icon(forFile: app.applicationURL.path)
+                item.image?.size = NSSize(width: 18, height: 18)
+                managedAppsMenu.addItem(item)
+            }
+        }
+        managedAppsMenu.addItem(.separator())
+        let manage = NSMenuItem(title: "管理白名单…", action: #selector(showSettings), keyEquivalent: "")
+        manage.target = self
+        managedAppsMenu.addItem(manage)
+    }
+
+    private func shortTimeZoneName(_ identifier: String) -> String {
+        TimeZone(identifier: identifier)?.localizedName(for: .generic, locale: Locale(identifier: "zh_CN"))
+            ?? identifier
+    }
+
+    @objc private func openManagedApplication(_ sender: NSMenuItem) {
+        guard let idString = sender.representedObject as? String,
+              let id = UUID(uuidString: idString),
+              let app = settings.managedTimeZoneApps.first(where: { $0.id == id }) else { return }
+        settings.launch(app)
     }
 
     @objc private func showSettings() {
