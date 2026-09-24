@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureStatusItem()
         configureMenu()
+        settings.startMonitoringApplications()
         NotificationCenter.default.addObserver(
             forName: ClockSettings.changed,
             object: nil,
@@ -147,6 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func rebuildManagedAppsMenu() {
+        settings.refreshApplicationStatuses()
         managedAppsMenu.removeAllItems()
         if settings.managedTimeZoneApps.isEmpty {
             let empty = NSMenuItem(title: "尚未添加应用", action: nil, keyEquivalent: "")

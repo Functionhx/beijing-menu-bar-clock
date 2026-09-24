@@ -39,8 +39,11 @@ final class ClockSettings: ObservableObject {
             NotificationCenter.default.post(name: Self.changed, object: self)
         }
     }
+    @Published private(set) var applicationStatusRevision = 0
 
     private let defaults = UserDefaults.standard
+    private var workspaceObservers: [NSObjectProtocol] = []
+    private var automaticRestartingBundleIdentifiers: Set<String> = []
 
     private init() {
         defaults.register(defaults: [
@@ -113,8 +116,54 @@ final class ClockSettings: ObservableObject {
         managedTimeZoneApps.removeAll { $0.id == id }
     }
 
+    func toggleAutomaticLaunchManagement(for id: UUID) {
+        guard let index = managedTimeZoneApps.firstIndex(where: { $0.id == id }) else { return }
+        managedTimeZoneApps[index].automaticallyManageLaunches.toggle()
+    }
+
+    var allApplicationsAutomaticallyManaged: Bool {
+        !managedTimeZoneApps.isEmpty && managedTimeZoneApps.allSatisfy(\.automaticallyManageLaunches)
+    }
+
+    func setAutomaticLaunchManagementForAll(_ enabled: Bool) {
+        for index in managedTimeZoneApps.indices {
+            managedTimeZoneApps[index].automaticallyManageLaunches = enabled
+        }
+    }
+
     func isRunning(_ app: ManagedTimeZoneApp) -> Bool {
         !NSRunningApplication.runningApplications(withBundleIdentifier: app.bundleIdentifier).isEmpty
+    }
+
+    func startMonitoringApplications() {
+        guard workspaceObservers.isEmpty else { return }
+        let center = NSWorkspace.shared.notificationCenter
+        let launched = center.addObserver(
+            forName: NSWorkspace.didLaunchApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let runningApplication = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
+                return
+            }
+            Task { @MainActor in
+                self?.applicationDidLaunch(runningApplication)
+            }
+        }
+        let terminated = center.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshApplicationStatuses()
+            }
+        }
+        workspaceObservers = [launched, terminated]
+    }
+
+    func refreshApplicationStatuses() {
+        applicationStatusRevision &+= 1
     }
 
     func launchStatus(for app: ManagedTimeZoneApp) -> ManagedAppLaunchStatus {
@@ -225,10 +274,40 @@ final class ClockSettings: ObservableObject {
             "BEIJING_CLOCK_TIME_ZONE": app.timeZoneIdentifier
         ]
         NSWorkspace.shared.openApplication(at: url, configuration: configuration) { [weak self] _, error in
-            guard let error else { return }
             Task { @MainActor in
-                self?.showError(title: "无法打开“\(app.displayName)”", message: error.localizedDescription)
+                self?.refreshApplicationStatuses()
+                if let error {
+                    self?.automaticRestartingBundleIdentifiers.remove(app.bundleIdentifier)
+                    self?.showError(title: "无法打开“\(app.displayName)”", message: error.localizedDescription)
+                }
             }
+        }
+    }
+
+    private func applicationDidLaunch(_ runningApplication: NSRunningApplication) {
+        refreshApplicationStatuses()
+        guard let bundleIdentifier = runningApplication.bundleIdentifier,
+              let app = managedTimeZoneApps.first(where: {
+                  $0.bundleIdentifier == bundleIdentifier && $0.automaticallyManageLaunches
+              }) else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+            guard let self else { return }
+            let status = self.launchStatus(for: app)
+
+            if self.automaticRestartingBundleIdentifiers.contains(bundleIdentifier) {
+                self.automaticRestartingBundleIdentifiers.remove(bundleIdentifier)
+                self.refreshApplicationStatuses()
+                return
+            }
+
+            guard status == .notApplied else { return }
+            self.automaticRestartingBundleIdentifiers.insert(bundleIdentifier)
+            let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+            for runningApp in runningApps {
+                runningApp.terminate()
+            }
+            self.waitUntilStoppedAndOpen(app, attemptsRemaining: 50)
         }
     }
 

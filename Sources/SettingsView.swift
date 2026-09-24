@@ -1,12 +1,9 @@
 import AppKit
-import Combine
 import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var settings: ClockSettings
     let onDone: () -> Void
-    @State private var statusRefreshDate = Date()
-    private let statusTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,6 +29,17 @@ struct SettingsView: View {
 
                     sectionTitle("应用时区白名单")
                     settingsCard {
+                        HStack {
+                            Label("全局自动接管", systemImage: "bolt.fill")
+                            Spacer()
+                            Button(settings.allApplicationsAutomaticallyManaged ? "全部关闭" : "全部开启") {
+                                settings.setAutomaticLaunchManagementForAll(!settings.allApplicationsAutomaticallyManaged)
+                            }
+                            .disabled(settings.managedTimeZoneApps.isEmpty)
+                        }
+
+                        Divider()
+
                         if settings.managedTimeZoneApps.isEmpty {
                             VStack(spacing: 8) {
                                 Image(systemName: "clock.badge.questionmark")
@@ -62,7 +70,7 @@ struct SettingsView: View {
                                 Label("添加应用…", systemImage: "plus")
                             }
                             Spacer()
-                            Text("仅从本工具启动时生效")
+                            Text("可直接从 Dock 或访达打开，工具会自动接管")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -142,8 +150,7 @@ struct SettingsView: View {
             .padding(18)
             .background(.regularMaterial)
         }
-        .frame(width: 650, height: 760)
-        .onReceive(statusTimer) { statusRefreshDate = $0 }
+        .frame(width: 730, height: 760)
     }
 
     @ViewBuilder
@@ -166,7 +173,7 @@ struct SettingsView: View {
     private func applicationRow(app: Binding<ManagedTimeZoneApp>) -> some View {
         let value = app.wrappedValue
         let status = settings.launchStatus(for: value)
-        let _ = statusRefreshDate
+        let _ = settings.applicationStatusRevision
         HStack(spacing: 12) {
             Image(nsImage: NSWorkspace.shared.icon(forFile: value.applicationURL.path))
                 .resizable()
@@ -195,6 +202,13 @@ struct SettingsView: View {
                 settings.launch(value)
             }
             .frame(width: 52)
+
+            Button(value.automaticallyManageLaunches ? "自动：开" : "自动：关") {
+                settings.toggleAutomaticLaunchManagement(for: value.id)
+            }
+            .controlSize(.small)
+            .foregroundStyle(value.automaticallyManageLaunches ? .blue : .secondary)
+            .help("开启后，从 Dock 或访达启动也会自动重开一次并注入时区")
 
             Menu {
                 Button("在访达中显示") { settings.reveal(value) }
