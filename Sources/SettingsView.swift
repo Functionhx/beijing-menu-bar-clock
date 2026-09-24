@@ -1,9 +1,12 @@
 import AppKit
+import Combine
 import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var settings: ClockSettings
     let onDone: () -> Void
+    @State private var statusRefreshDate = Date()
+    private let statusTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -140,6 +143,7 @@ struct SettingsView: View {
             .background(.regularMaterial)
         }
         .frame(width: 650, height: 760)
+        .onReceive(statusTimer) { statusRefreshDate = $0 }
     }
 
     @ViewBuilder
@@ -161,6 +165,8 @@ struct SettingsView: View {
     @ViewBuilder
     private func applicationRow(app: Binding<ManagedTimeZoneApp>) -> some View {
         let value = app.wrappedValue
+        let status = settings.launchStatus(for: value)
+        let _ = statusRefreshDate
         HStack(spacing: 12) {
             Image(nsImage: NSWorkspace.shared.icon(forFile: value.applicationURL.path))
                 .resizable()
@@ -170,11 +176,12 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(value.displayName)
                     .lineLimit(1)
-                Text(settings.isRunning(value) ? "正在运行" : "未运行")
+                Label(status.label, systemImage: status.symbolName)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(statusColor(status))
+                    .lineLimit(1)
             }
-            .frame(width: 105, alignment: .leading)
+            .frame(width: 155, alignment: .leading)
 
             Picker("时区", selection: app.timeZoneIdentifier) {
                 ForEach(settings.timeZoneChoices, id: \.self) { identifier in
@@ -184,7 +191,7 @@ struct SettingsView: View {
             .labelsHidden()
             .frame(maxWidth: .infinity)
 
-            Button(settings.isRunning(value) ? "重启" : "打开") {
+            Button(status == .notRunning ? "打开" : "重启") {
                 settings.launch(value)
             }
             .frame(width: 52)
@@ -200,6 +207,14 @@ struct SettingsView: View {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
+        }
+    }
+
+    private func statusColor(_ status: ManagedAppLaunchStatus) -> Color {
+        switch status {
+        case .applied: return .green
+        case .notApplied, .mismatched: return .orange
+        case .notRunning, .unavailable: return .secondary
         }
     }
 }

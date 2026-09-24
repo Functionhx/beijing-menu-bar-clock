@@ -154,8 +154,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             managedAppsMenu.addItem(empty)
         } else {
             for app in settings.managedTimeZoneApps {
+                let status = settings.launchStatus(for: app)
                 let item = NSMenuItem(
-                    title: "\(app.displayName) · \(shortTimeZoneName(app.timeZoneIdentifier))",
+                    title: "\(app.displayName) · \(shortTimeZoneName(app.timeZoneIdentifier)) · \(status.menuLabel)",
                     action: #selector(openManagedApplication(_:)),
                     keyEquivalent: ""
                 )

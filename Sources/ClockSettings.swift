@@ -117,6 +117,27 @@ final class ClockSettings: ObservableObject {
         !NSRunningApplication.runningApplications(withBundleIdentifier: app.bundleIdentifier).isEmpty
     }
 
+    func launchStatus(for app: ManagedTimeZoneApp) -> ManagedAppLaunchStatus {
+        let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: app.bundleIdentifier)
+        guard !runningApps.isEmpty else { return .notRunning }
+
+        var readAtLeastOneEnvironment = false
+        for runningApp in runningApps {
+            guard let environment = ProcessEnvironmentReader.environment(for: runningApp.processIdentifier) else {
+                continue
+            }
+            readAtLeastOneEnvironment = true
+            guard environment["BEIJING_CLOCK_MANAGED"] == "1" else { continue }
+
+            let actualTimeZone = environment["BEIJING_CLOCK_TIME_ZONE"] ?? environment["TZ"] ?? "未知"
+            if actualTimeZone == app.timeZoneIdentifier {
+                return .applied(actualTimeZone)
+            }
+            return .mismatched(actual: actualTimeZone)
+        }
+        return readAtLeastOneEnvironment ? .notApplied : .unavailable
+    }
+
     func launch(_ app: ManagedTimeZoneApp) {
         let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: app.bundleIdentifier)
         if runningApps.isEmpty {
@@ -198,7 +219,11 @@ final class ClockSettings: ObservableObject {
 
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
-        configuration.environment = ["TZ": app.timeZoneIdentifier]
+        configuration.environment = [
+            "TZ": app.timeZoneIdentifier,
+            "BEIJING_CLOCK_MANAGED": "1",
+            "BEIJING_CLOCK_TIME_ZONE": app.timeZoneIdentifier
+        ]
         NSWorkspace.shared.openApplication(at: url, configuration: configuration) { [weak self] _, error in
             guard let error else { return }
             Task { @MainActor in

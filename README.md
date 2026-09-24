@@ -9,6 +9,7 @@ A small native macOS menu bar clock that always displays Beijing time (`Asia/Sha
 - Optional system-time-zone mode that overrides and disables the manual time-zone picker
 - Per-app time-zone allowlist with a native app picker and individual time zones
 - Quick launch for allowlisted apps directly from the menu bar
+- Live verification of whether a running allowlisted app received the requested time zone
 - Optional date and weekday
 - Optional seconds
 - Optional flashing time separators
@@ -48,7 +49,7 @@ On recent macOS versions, enable the app under:
 
 The app does not use Location Services or the network. It reads the Mac's system clock and formats it using the time zone selected in settings. The default is `Asia/Shanghai`. When system-time-zone mode is enabled, the current macOS time zone takes precedence over the saved manual selection.
 
-For allowlisted apps, the clock asks macOS to launch a fresh app process with a `TZ` environment value. The target app is not modified. This only affects apps that honor the standard time-zone environment and only when they are launched from this clock; some apps may continue to use the system time zone or server-formatted timestamps.
+For allowlisted apps, the clock asks macOS to launch a fresh app process with a `TZ` environment value and a local verification marker. The target app is not modified. The settings window reads the running process environment to distinguish apps launched with the requested time zone from apps opened normally. This only affects apps that honor the standard time-zone environment and only when they are launched from this clock; some apps may continue to use the system time zone or server-formatted timestamps.
 
 ## License
 
