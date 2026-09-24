@@ -8,8 +8,10 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 22) {
             sectionTitle("时区")
             settingsCard {
+                Toggle("使用系统时区", isOn: $settings.useSystemTimeZone)
+                Divider()
                 HStack {
-                    Text("显示时区")
+                    Text("自选时区")
                     Spacer()
                     Picker("", selection: $settings.timeZoneIdentifier) {
                         ForEach(settings.timeZoneChoices, id: \.self) { identifier in
@@ -19,6 +21,7 @@ struct SettingsView: View {
                     .labelsHidden()
                     .frame(width: 290)
                 }
+                .disabled(settings.useSystemTimeZone)
             }
 
             sectionTitle("日期")

@@ -125,7 +125,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private var selectedTimeZone: TimeZone {
-        TimeZone(identifier: settings.timeZoneIdentifier) ?? TimeZone(identifier: "Asia/Shanghai")!
+        if settings.useSystemTimeZone {
+            return .autoupdatingCurrent
+        }
+        return TimeZone(identifier: settings.timeZoneIdentifier) ?? TimeZone(identifier: "Asia/Shanghai")!
     }
 
     func menuWillOpen(_ menu: NSMenu) {

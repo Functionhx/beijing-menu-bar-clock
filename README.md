@@ -6,6 +6,7 @@ A small native macOS menu bar clock that always displays Beijing time (`Asia/Sha
 
 - Native AppKit menu bar item and SwiftUI settings window
 - Any time zone from the macOS system time-zone database, saved between launches
+- Optional system-time-zone mode that overrides and disables the manual time-zone picker
 - Optional date and weekday
 - Optional seconds
 - Optional flashing time separators
@@ -43,7 +44,7 @@ On recent macOS versions, enable the app under:
 
 ## Privacy
 
-The app does not use Location Services or the network. It reads the Mac's system clock and formats it using the time zone selected in settings. The default is `Asia/Shanghai`.
+The app does not use Location Services or the network. It reads the Mac's system clock and formats it using the time zone selected in settings. The default is `Asia/Shanghai`. When system-time-zone mode is enabled, the current macOS time zone takes precedence over the saved manual selection.
 
 ## License
 
