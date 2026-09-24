@@ -63,9 +63,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func startTimer() {
         timer?.invalidate()
-        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+        // Fire just after each whole second so the 0.2s tolerance never crosses into the next second.
+        let nextSecond = Date(timeIntervalSinceReferenceDate: Date.timeIntervalSinceReferenceDate.rounded(.down) + 1.02)
+        let timer = Timer(fire: nextSecond, interval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.updateClock() }
         }
+        timer.tolerance = 0.2
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
