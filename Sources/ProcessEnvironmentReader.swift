@@ -13,7 +13,7 @@ enum ManagedAppLaunchStatus: Equatable {
         case .notRunning:
             return "未运行"
         case .applied:
-            return "已应用指定时区"
+            return "已注入指定时区"
         case .notApplied:
             return "运行中，但未应用"
         case let .mismatched(actual):
@@ -26,7 +26,7 @@ enum ManagedAppLaunchStatus: Equatable {
     var menuLabel: String {
         switch self {
         case .notRunning: return "未运行"
-        case .applied: return "已应用"
+        case .applied: return "已注入"
         case .notApplied: return "未应用"
         case .mismatched: return "时区不一致"
         case .unavailable: return "无法确认"
