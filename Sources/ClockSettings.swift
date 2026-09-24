@@ -15,9 +15,11 @@ final class ClockSettings: ObservableObject {
         static let announceInterval = "announceInterval"
         static let soundName = "soundName"
         static let customSoundPath = "customSoundPath"
+        static let timeZoneIdentifier = "timeZoneIdentifier"
     }
 
     let soundChoices = ["系统声音", "Glass", "Ping", "Pop", "Tink", "无", "自定义…"]
+    let timeZoneChoices = TimeZone.knownTimeZoneIdentifiers.sorted()
 
     @Published var showDate: Bool { didSet { save(Key.showDate, showDate) } }
     @Published var showWeekday: Bool { didSet { save(Key.showWeekday, showWeekday) } }
@@ -27,6 +29,7 @@ final class ClockSettings: ObservableObject {
     @Published var announceInterval: String { didSet { save(Key.announceInterval, announceInterval) } }
     @Published var soundName: String { didSet { save(Key.soundName, soundName) } }
     @Published var customSoundPath: String { didSet { save(Key.customSoundPath, customSoundPath) } }
+    @Published var timeZoneIdentifier: String { didSet { save(Key.timeZoneIdentifier, timeZoneIdentifier) } }
 
     private let defaults = UserDefaults.standard
 
@@ -39,7 +42,8 @@ final class ClockSettings: ObservableObject {
             Key.announceTime: false,
             Key.announceInterval: "每小时",
             Key.soundName: "系统声音",
-            Key.customSoundPath: ""
+            Key.customSoundPath: "",
+            Key.timeZoneIdentifier: "Asia/Shanghai"
         ])
 
         showDate = defaults.bool(forKey: Key.showDate)
@@ -50,6 +54,7 @@ final class ClockSettings: ObservableObject {
         announceInterval = defaults.string(forKey: Key.announceInterval) ?? "每小时"
         soundName = defaults.string(forKey: Key.soundName) ?? "系统声音"
         customSoundPath = defaults.string(forKey: Key.customSoundPath) ?? ""
+        timeZoneIdentifier = defaults.string(forKey: Key.timeZoneIdentifier) ?? "Asia/Shanghai"
     }
 
     private func save(_ key: String, _ value: Any) {

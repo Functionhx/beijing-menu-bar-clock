@@ -6,7 +6,6 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
-    private let timeZone = TimeZone(identifier: "Asia/Shanghai")!
     private let settings = ClockSettings.shared
     private let speech = AVSpeechSynthesizer()
     private var timer: Timer?
@@ -29,7 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func configureStatusItem() {
         guard let button = statusItem.button else { return }
-        button.toolTip = "北京时间"
+        button.toolTip = "菜单栏时钟"
         button.imagePosition = .noImage
         statusItem.menu = menu
     }
@@ -62,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updateClock() {
         let now = Date()
+        let timeZone = selectedTimeZone
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.timeZone = timeZone
@@ -90,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func announceIfNeeded(_ date: Date) {
         guard settings.announceTime else { return }
+        let timeZone = selectedTimeZone
         let calendar = Calendar(identifier: .gregorian)
         let values = calendar.dateComponents(in: timeZone, from: date)
         guard values.second == 0, let minute = values.minute, let hour = values.hour else { return }
@@ -107,7 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         lastAnnouncementMinute = key
 
         playAnnouncementSound()
-        let utterance = AVSpeechUtterance(string: "现在是北京时间\(hour)点\(minute == 0 ? "整" : "\(minute)分")")
+        let utterance = AVSpeechUtterance(string: "现在是\(hour)点\(minute == 0 ? "整" : "\(minute)分")")
         utterance.voice = AVSpeechSynthesisVoice(language: "zh-CN")
         speech.speak(utterance)
     }
@@ -121,6 +122,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "系统声音": NSSound(named: "Glass")?.play()
         default: NSSound(named: settings.soundName)?.play()
         }
+    }
+
+    private var selectedTimeZone: TimeZone {
+        TimeZone(identifier: settings.timeZoneIdentifier) ?? TimeZone(identifier: "Asia/Shanghai")!
     }
 
     func menuWillOpen(_ menu: NSMenu) {

@@ -6,6 +6,21 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
+            sectionTitle("时区")
+            settingsCard {
+                HStack {
+                    Text("显示时区")
+                    Spacer()
+                    Picker("", selection: $settings.timeZoneIdentifier) {
+                        ForEach(settings.timeZoneChoices, id: \.self) { identifier in
+                            Text(timeZoneLabel(identifier)).tag(identifier)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 290)
+                }
+            }
+
             sectionTitle("日期")
             settingsCard {
                 Toggle("显示日期", isOn: $settings.showDate)
@@ -76,7 +91,7 @@ struct SettingsView: View {
             }
         }
         .padding(24)
-        .frame(width: 500, height: 570)
+        .frame(width: 540, height: 670)
     }
 
     @ViewBuilder
@@ -93,5 +108,11 @@ struct SettingsView: View {
             .font(.title3.weight(.semibold))
             .padding(.leading, 2)
             .padding(.bottom, -12)
+    }
+
+    private func timeZoneLabel(_ identifier: String) -> String {
+        guard let zone = TimeZone(identifier: identifier) else { return identifier }
+        let name = zone.localizedName(for: .generic, locale: Locale(identifier: "zh_CN")) ?? identifier
+        return "\(name) — \(identifier)"
     }
 }
