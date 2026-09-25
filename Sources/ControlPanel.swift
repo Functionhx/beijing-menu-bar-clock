@@ -279,10 +279,29 @@ private struct ControlPanelContent: View {
                 GlassToggleTile(
                     title: toggle.title,
                     symbol: toggle.symbol,
-                    isOn: toggle.binding,
+                    isOn: toggle.binding.wrappedValue,
                     unionID: Self.unionID(for: index, states: states),
                     namespace: glassNamespace
                 )
+            }
+        }
+        // Hit targets live in a separate row above the glass. When tiles fuse through glassEffectUnion the
+        // merged glass is drawn by the last member and swallows clicks meant for the earlier tiles, so
+        // per-tile buttons stop working (e.g. 日期 and 星期 while 秒钟 is also on).
+        .overlay {
+            HStack(spacing: 8) {
+                ForEach(Array(toggles.enumerated()), id: \.offset) { _, toggle in
+                    Button {
+                        withAnimation(Metrics.spring) { toggle.binding.wrappedValue.toggle() }
+                    } label: {
+                        Color.clear
+                            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(toggle.title)
+                    .accessibilityValue(toggle.binding.wrappedValue ? "开" : "关")
+                    .help("\(toggle.binding.wrappedValue ? "隐藏" : "显示")\(toggle.title)")
+                }
             }
         }
     }
@@ -645,14 +664,14 @@ private struct ControlPanelContent: View {
 private struct GlassToggleTile: View {
     let title: String
     let symbol: String
-    @Binding var isOn: Bool
+    let isOn: Bool
     let unionID: String
     let namespace: Namespace.ID
 
     var body: some View {
-        // The label is the glass content; the Button is a transparent overlay outside the union.
-        // A glassEffectUnion that contains a Button inside a GlassEffectContainer sends SwiftUI's
-        // key-view-loop builder into an endless loop when the panel becomes key (macOS 26 SDK).
+        // Display only; ControlPanelContent.displayToggles overlays the buttons (see the note there).
+        // Keeping Buttons out of the union also avoids a macOS 26 SDK hang: a glassEffectUnion containing a
+        // Button inside a GlassEffectContainer loops forever building the key view loop when the panel becomes key.
         VStack(spacing: 6) {
             Image(systemName: symbol)
                 .font(.system(size: 18, weight: .semibold))
@@ -673,18 +692,6 @@ private struct GlassToggleTile: View {
         )
         .glassEffectUnion(id: unionID, namespace: namespace)
         .glassEffectID("toggle-\(title)", in: namespace)
-        .overlay {
-            Button {
-                withAnimation(Metrics.spring) { isOn.toggle() }
-            } label: {
-                Color.clear
-                    .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(title)
-            .accessibilityValue(isOn ? "开" : "关")
-        }
-        .help("\(isOn ? "隐藏" : "显示")\(title)")
     }
 }
 
