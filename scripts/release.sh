@@ -34,9 +34,14 @@ step "Generating project ($BRANCH_NAME $VERSION build $BUILD_NUMBER)"
 generate_project
 
 step "Archiving"
-xcodebuild -project "$ROOT_DIR/BeijingClock.xcodeproj" -scheme BeijingClock -configuration Release \
-  -derivedDataPath "$ROOT_DIR/build/DerivedData" -archivePath "$ARCHIVE" archive -quiet \
-  2>&1 | grep -E "error|warning: .*\.swift" || true
+LOG="$OUT_DIR/xcodebuild.log"
+if ! xcodebuild -project "$ROOT_DIR/BeijingClock.xcodeproj" -scheme BeijingClock -configuration Release \
+    -derivedDataPath "$ROOT_DIR/build/DerivedData" -archivePath "$ARCHIVE" archive -quiet >"$LOG" 2>&1; then
+  grep -E "^/.*: (error|warning): |^error: " "$LOG" || true
+  echo "Archive failed; full log: $LOG" >&2
+  exit 1
+fi
+grep -E "^/.*: warning: " "$LOG" || true
 ditto "$ARCHIVE/Products/Applications/$APP_NAME.app" "$APP"
 
 # Sign inside-out as Sparkle documents: XPC services, Autoupdate, Updater.app, framework, then the app.
