@@ -161,14 +161,51 @@ struct ControlPanelView: View {
     var initialExpansion: Expansion?
 
     var body: some View {
-        ControlPanelContent(settings: settings, actions: actions, expansion: initialExpansion)
-            .id(session)
+        ControlPanelContent(
+            settings: settings,
+            actions: actions,
+            expansion: initialExpansion,
+            tab: PanelTab.initial(for: initialExpansion)
+        )
+        .id(session)
+    }
+}
+
+/// Top-level sections of the panel, shown one at a time under the clock like the ultra edition.
+enum PanelTab: String, CaseIterable, Identifiable {
+    case calendar, clock, applications
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .calendar: return "日历"
+        case .clock: return "时钟"
+        case .applications: return "应用"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .calendar: return "calendar"
+        case .clock: return "clock.fill"
+        case .applications: return "app.badge.clock.fill"
+        }
+    }
+
+    /// The panel always opens on the calendar unless it was opened to edit something specific.
+    static func initial(for expansion: ControlPanelView.Expansion?) -> PanelTab {
+        switch expansion {
+        case .clockTimeZone: return .clock
+        case .applicationTimeZone: return .applications
+        case nil: return .calendar
+        }
     }
 }
 
 // MARK: - Layout constants
 
-private enum Metrics {
+enum Metrics {
     static let width: CGFloat = 340
     static let cardRadius: CGFloat = 26
     static let cardPadding: CGFloat = 14
@@ -180,23 +217,29 @@ private enum Metrics {
 
 private struct ControlPanelContent: View {
     @ObservedObject var settings: ClockSettings
+    @ObservedObject var loginItem = LoginItem.shared
     let actions: ControlPanelActions
     @State var expansion: ControlPanelView.Expansion?
+    @State var tab: PanelTab
     @State private var appeared = false
     @Namespace private var glassNamespace
+    @Namespace private var tabNamespace
 
     private let chinese = Locale(identifier: "zh_CN")
 
     var body: some View {
         // Container spacing is smaller than the gaps between cards, so cards stay separate at rest and
         // only melt together when a morphing element passes between them.
-        GlassEffectContainer(spacing: 6) {
-            VStack(spacing: Metrics.spacing) {
-                hero
-                displayToggles
-                timeZoneCard
-                announcementCard
-                applicationsCard
+        VStack(spacing: Metrics.spacing) {
+            GlassEffectContainer(spacing: 6) {
+                VStack(spacing: Metrics.spacing) {
+                    hero
+                    tabBar
+                }
+            }
+            tabContent
+                .id(tab)
+            GlassEffectContainer(spacing: 6) {
                 footer
             }
         }
@@ -207,6 +250,27 @@ private struct ControlPanelContent: View {
         .blur(radius: appeared ? 0 : 6)
         .onAppear {
             withAnimation(.spring(response: 0.38, dampingFraction: 0.8)) { appeared = true }
+            loginItem.refresh()
+        }
+    }
+
+    /// Each tab gets a fresh glass container. Views inserted into an existing GlassEffectContainer after it first
+    /// rendered stay visible but never receive clicks (macOS 26), so switching tabs rebuilds the container.
+    private var tabContent: some View {
+        GlassEffectContainer(spacing: 6) {
+            VStack(spacing: Metrics.spacing) {
+                switch tab {
+                case .calendar:
+                    CalendarCard(settings: settings, namespace: glassNamespace)
+                case .clock:
+                    displayToggles
+                    launchAtLoginCard
+                    timeZoneCard
+                    announcementCard
+                case .applications:
+                    applicationsCard
+                }
+            }
         }
     }
 
@@ -243,7 +307,7 @@ private struct ControlPanelContent: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
 
-                Text("\(format(date, "yyyy年M月d日 EEEE")) · \(settings.shortTimeZoneName(settings.effectiveTimeZone))")
+                Text("\(format(date, "yyyy年M月d日 EEEE")) · \(lunarLabel(date))")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -254,6 +318,77 @@ private struct ControlPanelContent: View {
             .glassEffect(.regular, in: .rect(cornerRadius: Metrics.cardRadius + 4))
             .glassEffectID("hero", in: glassNamespace)
         }
+    }
+
+    /// "农历八月十五" plus " · 秋分" on the day of a solar term, by the clock's calendar day.
+    private func lunarLabel(_ date: Date) -> String {
+        let parts = CalendarCard.calendar(in: settings.effectiveTimeZone).dateComponents([.year, .month, .day], from: date)
+        let year = parts.year ?? 2000, month = parts.month ?? 1, day = parts.day ?? 1
+        let lunar = LunarCalendar.lunarDate(year: year, month: month, day: day)
+        let term = SolarTerms.termName(year: year, month: month, day: day).map { " · \($0)" } ?? ""
+        return "农历\(lunar.monthName)\(lunar.dayName)\(term)"
+    }
+
+    // MARK: Tabs
+
+    private var tabBar: some View {
+        HStack(spacing: 2) {
+            ForEach(PanelTab.allCases) { item in
+                let isSelected = item == tab
+                Button {
+                    withAnimation(Metrics.spring) {
+                        tab = item
+                        expansion = nil
+                    }
+                } label: {
+                    Label(item.title, systemImage: item.symbol)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(isSelected ? Color.white : Color.primary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 30)
+                        .background {
+                            if isSelected {
+                                Capsule()
+                                    .fill(Color.accentColor.gradient)
+                                    .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
+                                    .matchedGeometryEffect(id: "selection", in: tabNamespace)
+                            }
+                        }
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .glassEffect(.regular, in: .capsule)
+        .glassEffectID("tabs", in: glassNamespace)
+    }
+
+    // MARK: Launch at login
+
+    private var launchAtLoginCard: some View {
+        HStack(spacing: 12) {
+            Button {
+                withAnimation(Metrics.spring) { loginItem.setEnabled(!loginItem.isEnabled) }
+            } label: {
+                StateCircle(symbol: "power", isOn: loginItem.isEnabled)
+            }
+            .buttonStyle(.plain)
+            .help(loginItem.isEnabled ? "登录 Mac 时不再自动打开" : "登录 Mac 时自动打开")
+
+            CardLabel(title: "开机启动", subtitle: loginItem.lastError ?? loginItem.subtitle)
+            Spacer(minLength: 4)
+
+            if loginItem.status == .requiresApproval {
+                Button("去批准", action: loginItem.openSystemSettings)
+                    .font(.system(size: 12, weight: .semibold))
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.small)
+            }
+        }
+        .card(id: "login", in: glassNamespace)
     }
 
     private var currentEntry: TimeZoneEntry {
@@ -696,7 +831,7 @@ private struct GlassToggleTile: View {
 }
 
 /// Solid state indicator used inside glass cards (glass on glass would muddy the card).
-private struct StateCircle: View {
+struct StateCircle: View {
     let symbol: String
     let isOn: Bool
 
@@ -751,7 +886,7 @@ private struct LiquidSegmentedControl: View {
     }
 }
 
-private struct CardLabel: View {
+struct CardLabel: View {
     let title: String
     let subtitle: String
 
@@ -769,7 +904,7 @@ private struct CardLabel: View {
     }
 }
 
-private extension View {
+extension View {
     /// A floating Liquid Glass card. Its size animates when content expands, so the glass itself morphs.
     func card(id: String, in namespace: Namespace.ID) -> some View {
         padding(Metrics.cardPadding)

@@ -43,7 +43,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .timeZone: return "菜单栏时钟使用的时区，不影响系统时区。"
         case .applications: return "让指定应用以独立时区启动，例如微信按北京时间显示。"
         case .announcement: return "按固定间隔用中文播报当前时间。"
-        case .about: return "版本信息与自动更新。"
+        case .about: return "版本信息、开机启动与自动更新。"
         }
     }
 }
@@ -154,6 +154,7 @@ struct SettingsView: View {
 
     @ObservedObject var settings: ClockSettings
     @ObservedObject var navigation: SettingsNavigation
+    @ObservedObject var loginItem = LoginItem.shared
     let onCheckForUpdates: () -> Void
 
     var body: some View {
@@ -444,6 +445,23 @@ struct SettingsView: View {
                     Spacer()
                     Button("检查更新…", action: onCheckForUpdates)
                         .buttonStyle(.glassProminent)
+                }
+            }
+            GlassSection("开机启动") {
+                SwitchRow("登录 Mac 时自动打开", isOn: Binding(
+                    get: { loginItem.isEnabled },
+                    set: { loginItem.setEnabled($0) }
+                ))
+                if loginItem.status == .requiresApproval || loginItem.lastError != nil {
+                    HStack {
+                        Text(loginItem.lastError ?? "需要在「系统设置 › 通用 › 登录项」中批准")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("打开登录项设置", action: loginItem.openSystemSettings)
+                            .buttonStyle(.glass)
+                            .controlSize(.small)
+                    }
                 }
             }
             Text("启用自动更新后，每天会向 GitHub 检查一次新版本，不收集任何数据。")

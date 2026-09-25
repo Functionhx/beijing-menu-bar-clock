@@ -51,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         configureMenu()
         settings.startMonitoringApplications()
         Updater.shared.start()
+        LoginItem.shared.registerOnFirstInstalledLaunch()
         NotificationCenter.default.addObserver(
             forName: ClockSettings.changed,
             object: nil,
