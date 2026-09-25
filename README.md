@@ -16,6 +16,12 @@
   <b>中文</b> · <a href="#english">English</a>
 </p>
 
+> [!NOTE]
+> **这是 Nano 极简版（`nano` 分支）**，应用名“北京时间 Nano”，可与完整版同时安装。只保留菜单栏时钟和一个小面板：日期 / 星期 / 秒 / 闪动开关、时区搜索、检查更新、退出。
+> 省略了：App 时区白名单与自动接管、语音报时、设置窗口、右键菜单。下文的功能介绍描述的是完整版。
+>
+> **This is the Nano edition (`nano` branch)**: just the menu bar clock and a small panel with date / weekday / seconds / blinking toggles, time zone search, update check and quit. It omits the per-app time zone whitelist and auto-takeover, voice announcements, the settings window and the right-click menu. The feature descriptions below refer to the full edition.
+
 ---
 
 **北京时间**是一个原生 macOS 菜单栏时钟：人在海外、系统时区不用动，菜单栏里始终显示北京时间。它还能让微信、QQ 这类指定 App 按北京时区启动，聊天记录和日程里的时间不再需要心算换算。
