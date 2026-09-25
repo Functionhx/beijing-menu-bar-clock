@@ -13,11 +13,13 @@ import SwiftUI
 ///   --seed-dates               replace the important dates with a fixed sample set
 ///   --reset                    start from default settings
 ///   --settings page            open 详细设置 on a page (e.g. importantDates) and screenshot it to --shot
+///   --backdrop                 put a colorful wallpaper behind the panel and shoot the region (for docs)
 /// After every click it prints the settings, so tests can assert on them.
 @main @MainActor struct PanelHarness {
     static var item: NSStatusItem!
     static var controller: ControlPanelController!
     static var settingsWindow: SettingsWindowController?
+    static var backdrop: NSWindow?
 
     static func arg(_ name: String) -> String? {
         let args = CommandLine.arguments
@@ -71,6 +73,7 @@ import SwiftUI
                 exit(3)
             }
             printState("start", panel)
+            if CommandLine.arguments.contains("--backdrop") { showBackdrop(under: panel) }
             run(clicks[...], panel)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 60) { print("ERROR timeout"); exit(2) }
@@ -87,7 +90,14 @@ import SwiftUI
             if let path = arg("shot") {
                 let p = Process()
                 p.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-                p.arguments = ["-x", "-o", "-l", "\(panel.windowNumber)", path]
+                if backdrop != nil {
+                    // Region shot so the wallpaper behind the glass is included.
+                    let frame = panel.frame.insetBy(dx: -14, dy: -14)
+                    let top = NSScreen.screens[0].frame.height - frame.maxY
+                    p.arguments = ["-x", "-R", "\(Int(frame.minX)),\(Int(top)),\(Int(frame.width)),\(Int(frame.height))", path]
+                } else {
+                    p.arguments = ["-x", "-o", "-l", "\(panel.windowNumber)", path]
+                }
                 try? p.run(); p.waitUntilExit()
             }
             exit(panel.isVisible ? 0 : 3)
@@ -124,6 +134,20 @@ import SwiftUI
         let bits = [s.showDate, s.showWeekday, s.showSeconds, s.flashSeparators].map { $0 ? "1" : "0" }.joined()
         let dates = ImportantDateStore.shared.items.map(\.title).joined(separator: ",")
         print("\(label): height=\(Int(panel.frame.height)) toggles=\(bits) zone=\(s.timeZoneIdentifier) dates=[\(dates)]")
+    }
+
+    static func showBackdrop(under panel: NSWindow) {
+        let frame = NSRect(x: panel.frame.minX - 60, y: panel.frame.maxY - 1000, width: panel.frame.width + 120, height: 1000)
+        let window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue - 1)
+        window.ignoresMouseEvents = true
+        window.contentView = NSHostingView(rootView: MeshGradient(
+            width: 3, height: 3,
+            points: [[0, 0], [0.5, 0], [1, 0], [0, 0.5], [0.6, 0.45], [1, 0.5], [0, 1], [0.5, 1], [1, 1]],
+            colors: [.indigo, .blue, .cyan, .purple, .pink, .teal, .orange, .mint, .blue]
+        ))
+        window.orderFront(nil)
+        backdrop = window
     }
 
     static func seedDates() {
