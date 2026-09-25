@@ -10,7 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let settings = ClockSettings.shared
     private let speech = AVSpeechSynthesizer()
     private var timer: Timer?
-    private var settingsWindow: NSWindow?
+    private var settingsWindow: SettingsWindowController?
     private lazy var controlPanel: ControlPanelController = {
         let controller = ControlPanelController(
             settings: settings,
@@ -246,18 +246,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func showSettings() {
         controlPanel.close()
         if settingsWindow == nil {
-            let view = SettingsView(settings: settings) { [weak self] in
-                self?.settingsWindow?.close()
-            }
-            let window = NSWindow(contentViewController: NSHostingController(rootView: view))
-            window.title = "详细设置"
-            window.styleMask = [.titled, .closable]
-            window.isReleasedWhenClosed = false
-            window.center()
-            settingsWindow = window
+            settingsWindow = SettingsWindowController(
+                settings: settings,
+                onCheckForUpdates: { [weak self] in self?.checkForUpdates() }
+            )
         }
-        NSApp.activate(ignoringOtherApps: true)
-        settingsWindow?.makeKeyAndOrderFront(nil)
+        settingsWindow?.show()
     }
 
     @objc private func checkForUpdates() {
