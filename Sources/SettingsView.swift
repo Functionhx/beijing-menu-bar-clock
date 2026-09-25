@@ -452,9 +452,9 @@ struct SettingsView: View {
                     get: { loginItem.isEnabled },
                     set: { loginItem.setEnabled($0) }
                 ))
-                if loginItem.status == .requiresApproval || loginItem.lastError != nil {
+                if let error = loginItem.lastError {
                     HStack {
-                        Text(loginItem.lastError ?? "需要在「系统设置 › 通用 › 登录项」中批准")
+                        Text(error)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer()

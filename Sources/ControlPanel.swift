@@ -379,14 +379,6 @@ private struct ControlPanelContent: View {
 
             CardLabel(title: "开机启动", subtitle: loginItem.lastError ?? loginItem.subtitle)
             Spacer(minLength: 4)
-
-            if loginItem.status == .requiresApproval {
-                Button("去批准", action: loginItem.openSystemSettings)
-                    .font(.system(size: 12, weight: .semibold))
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.capsule)
-                    .controlSize(.small)
-            }
         }
         .card(id: "login", in: glassNamespace)
     }

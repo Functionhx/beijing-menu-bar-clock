@@ -1,68 +1,69 @@
 import AppKit
 import ServiceManagement
 
-/// Launch at login through `SMAppService.mainApp` (replaces the old per-user LaunchAgent).
+/// Launch at login through a per-user LaunchAgent in ~/Library/LaunchAgents (install.sh writes the same file).
+/// SMAppService.mainApp registrations didn't survive a reboot for these ad-hoc signed builds (no Team ID),
+/// while a plain LaunchAgent does.
 @MainActor
 final class LoginItem: ObservableObject {
     static let shared = LoginItem()
 
-    private static let didAutoRegisterKey = "didAutoRegisterLoginItem"
-
-    @Published private(set) var status: SMAppService.Status = .notRegistered
+    @Published private(set) var isEnabled = false
     @Published private(set) var lastError: String?
 
     private init() {
         refresh()
+        removeServiceManagementRegistration()
     }
 
-    var isEnabled: Bool { status == .enabled || status == .requiresApproval }
+    var subtitle: String { isEnabled ? "开" : "关" }
 
-    var subtitle: String {
-        if lastError != nil { return "失败" }
-        switch status {
-        case .enabled: return "开"
-        case .requiresApproval: return "待批准"
-        case .notFound: return "不可用"
-        default: return "关"
-        }
+    private var label: String { Bundle.main.bundleIdentifier ?? "com.chen.dualtime.liquid" }
+
+    private var agentURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/\(label).plist")
     }
 
     func refresh() {
-        status = SMAppService.mainApp.status
+        isEnabled = FileManager.default.fileExists(atPath: agentURL.path)
     }
 
-    func setEnabled(_ enabled: Bool, openSettingsIfApprovalNeeded: Bool = true) {
+    func setEnabled(_ enabled: Bool) {
         lastError = nil
         do {
             if enabled {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
+                try FileManager.default.createDirectory(
+                    at: agentURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                let agent: [String: Any] = [
+                    "Label": label,
+                    "ProgramArguments": [Bundle.main.executablePath ?? ""],
+                    "RunAtLoad": true,
+                    "ProcessType": "Interactive",
+                    "AssociatedBundleIdentifiers": [label]
+                ]
+                let data = try PropertyListSerialization.data(fromPropertyList: agent, format: .xml, options: 0)
+                try data.write(to: agentURL, options: .atomic)
+            } else if FileManager.default.fileExists(atPath: agentURL.path) {
+                // Only the file goes: booting the job out would also quit this app when launchd started it.
+                try FileManager.default.removeItem(at: agentURL)
             }
         } catch {
             lastError = error.localizedDescription
         }
         refresh()
-        if openSettingsIfApprovalNeeded && status == .requiresApproval {
-            SMAppService.openSystemSettingsLoginItems()
-        }
     }
 
     func openSystemSettings() {
         SMAppService.openSystemSettingsLoginItems()
     }
 
-    /// The installer no longer creates a LaunchAgent, so the installed copy turns itself on once.
-    /// Builds run from other folders (Xcode, build/) never register, to keep stray copies out of Login Items.
-    func registerOnFirstInstalledLaunch() {
-        let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: Self.didAutoRegisterKey) else { return }
-        let path = Bundle.main.bundleURL.deletingLastPathComponent().path
-        let installFolders = ["/Applications", NSHomeDirectory() + "/Applications"]
-        guard installFolders.contains(path) else { return }
-        defaults.set(true, forKey: Self.didAutoRegisterKey)
-        if status != .enabled {
-            setEnabled(true, openSettingsIfApprovalNeeded: false)
-        }
+    /// The previous build registered through SMAppService; drop that record so the app isn't listed twice.
+    private func removeServiceManagementRegistration() {
+        let service = SMAppService.mainApp
+        guard service.status == .enabled || service.status == .requiresApproval else { return }
+        service.unregister { _ in }
     }
 }
