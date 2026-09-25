@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 chooseCustomSound: { [weak self] in
                     self?.runFromPanel { $0.chooseCustomSound() }
                 },
+                checkForUpdates: { [weak self] in self?.checkForUpdates() },
                 quit: { [weak self] in self?.quitApp() }
             )
         )

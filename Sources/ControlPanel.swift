@@ -7,6 +7,7 @@ struct ControlPanelActions {
     let reveal: (ManagedTimeZoneApp) -> Void
     let addApplications: () -> Void
     let chooseCustomSound: () -> Void
+    let checkForUpdates: () -> Void
     let quit: () -> Void
 }
 
@@ -28,9 +29,13 @@ private final class ResizingHostingView<Content: View>: NSHostingView<Content> {
     }
 }
 
-/// Control Center–style panel that drops down from the status item on left click.
+/// Drop-down panel under the status item. The window itself is fully transparent: every card is its own
+/// piece of Liquid Glass floating over the desktop, like Control Center on iOS 26.
 @MainActor
 final class ControlPanelController: NSObject, NSWindowDelegate {
+    /// Transparent margin around the cards so glass shadows and the appear animation aren't clipped.
+    static let outerPadding: CGFloat = 14
+
     private let panel: ControlPanelWindow
     private let hostingView: ResizingHostingView<ControlPanelView>
     private let settings: ClockSettings
@@ -38,7 +43,7 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
     private var outsideClickMonitor: Any?
     private var lastClosed = Date.distantPast
     private var session = 0
-    private var resizeScheduled = false
+    private var resizeGeneration = 0
     private(set) var isOpen = false
     var onClose: (() -> Void)?
 
@@ -56,13 +61,15 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
 
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        // Each glass card casts its own soft shadow; a window shadow would outline the transparent margin.
+        panel.hasShadow = false
         panel.level = .popUpMenu
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
         panel.delegate = self
-        panel.contentView = makeBackground(containing: hostingView)
+        hostingView.autoresizingMask = [.width, .height]
+        panel.contentView = hostingView
         hostingView.onIntrinsicSizeChange = { [weak self] in self?.scheduleResize() }
     }
 
@@ -74,7 +81,7 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
         guard let buttonWindow = button.window,
               let screen = buttonWindow.screen ?? NSScreen.main else { return }
 
-        // A fresh view identity each time, so searches and sub-pages start collapsed.
+        // A fresh view identity each time, so searches start collapsed and the appear animation replays.
         session += 1
         hostingView.rootView = ControlPanelView(
             settings: settings,
@@ -87,12 +94,13 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
         let size = hostingView.fittingSize
         let anchor = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
         let visible = screen.visibleFrame
-        let x = min(max(anchor.midX - size.width / 2, visible.minX + 8), visible.maxX - size.width - 8)
-        let y = min(anchor.minY, visible.maxY) - size.height - 6
+        let margin = Self.outerPadding
+        let x = min(max(anchor.midX - size.width / 2, visible.minX - margin + 8), visible.maxX - size.width + margin - 8)
+        // The first card sits 6pt under the menu bar; the transparent margin may overlap the menu bar.
+        let top = min(anchor.minY, visible.maxY) - 6 + margin
 
-        panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
+        panel.setFrame(NSRect(x: x, y: top - size.height, width: size.width, height: size.height), display: true)
         panel.makeKeyAndOrderFront(nil)
-        panel.invalidateShadow()
         isOpen = true
 
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
@@ -118,55 +126,26 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
         close()
     }
 
+    /// Grows immediately, but shrinks only after the collapse spring has settled so the glass isn't clipped mid-morph.
     private func scheduleResize() {
-        guard isOpen, !resizeScheduled else { return }
-        resizeScheduled = true
+        guard isOpen else { return }
+        resizeGeneration += 1
+        let generation = resizeGeneration
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.resizeScheduled = false
-            guard self.isOpen else { return }
-            let size = self.hostingView.fittingSize
-            var frame = self.panel.frame
-            guard abs(frame.height - size.height) > 0.5 else { return }
-            // Keep the top edge pinned under the menu bar.
-            frame.origin.y = frame.maxY - size.height
-            frame.size.height = size.height
-            self.panel.setFrame(frame, display: true)
-            self.panel.invalidateShadow()
+            guard let self, self.isOpen, generation == self.resizeGeneration else { return }
+            let height = self.hostingView.fittingSize.height
+            let delay = height < self.panel.frame.height ? 0.4 : 0
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, self.isOpen, generation == self.resizeGeneration else { return }
+                let height = self.hostingView.fittingSize.height
+                var frame = self.panel.frame
+                guard abs(frame.height - height) > 0.5 else { return }
+                // Keep the top edge pinned under the menu bar.
+                frame.origin.y = frame.maxY - height
+                frame.size.height = height
+                self.panel.setFrame(frame, display: true)
+            }
         }
-    }
-
-    private func makeBackground(containing content: NSView) -> NSView {
-        let cornerRadius: CGFloat = 18
-        content.autoresizingMask = [.width, .height]
-
-        if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView()
-            glass.cornerRadius = cornerRadius
-            glass.contentView = content
-            panel.hasShadow = false
-            return glass
-        }
-
-        let effect = NSVisualEffectView()
-        effect.material = .popover
-        effect.blendingMode = .behindWindow
-        effect.state = .active
-        effect.maskImage = Self.roundedMask(radius: cornerRadius)
-        effect.addSubview(content)
-        return effect
-    }
-
-    private static func roundedMask(radius: CGFloat) -> NSImage {
-        let edge = radius * 2 + 1
-        let image = NSImage(size: NSSize(width: edge, height: edge), flipped: false) { rect in
-            NSColor.black.setFill()
-            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
-            return true
-        }
-        image.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
-        image.resizingMode = .stretch
-        return image
     }
 }
 
@@ -187,48 +166,134 @@ struct ControlPanelView: View {
     }
 }
 
+// MARK: - Layout constants
+
+private enum Metrics {
+    static let width: CGFloat = 340
+    static let cardRadius: CGFloat = 26
+    static let cardPadding: CGFloat = 14
+    /// Inner shapes stay concentric with the card: outer radius minus padding.
+    static let innerRadius: CGFloat = cardRadius - cardPadding
+    static let spacing: CGFloat = 10
+    static let spring = Animation.spring(response: 0.42, dampingFraction: 0.78)
+}
+
 private struct ControlPanelContent: View {
     @ObservedObject var settings: ClockSettings
     let actions: ControlPanelActions
     @State var expansion: ControlPanelView.Expansion?
+    @State private var appeared = false
+    @Namespace private var glassNamespace
 
     private let chinese = Locale(identifier: "zh_CN")
 
     var body: some View {
-        VStack(spacing: 10) {
-            header
-
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
-                ToggleTile(title: "日期", symbol: "calendar", isOn: $settings.showDate)
-                ToggleTile(title: "星期", symbol: "calendar.badge.clock", isOn: $settings.showWeekday)
-                ToggleTile(title: "秒钟", symbol: "stopwatch", isOn: $settings.showSeconds)
-                ToggleTile(title: "闪动分隔符", symbol: "sparkles", isOn: $settings.flashSeparators)
+        // Container spacing is smaller than the gaps between cards, so cards stay separate at rest and
+        // only melt together when a morphing element passes between them.
+        GlassEffectContainer(spacing: 6) {
+            VStack(spacing: Metrics.spacing) {
+                hero
+                displayToggles
+                timeZoneCard
+                announcementCard
+                applicationsCard
+                footer
             }
-
-            timeZoneModule
-            announcementModule
-            applicationsModule
-            footer
         }
-        .padding(12)
-        .frame(width: 320)
+        .frame(width: Metrics.width)
+        .padding(ControlPanelController.outerPadding)
+        .scaleEffect(appeared ? 1 : 0.92, anchor: .top)
+        .opacity(appeared ? 1 : 0)
+        .blur(radius: appeared ? 0 : 6)
+        .onAppear {
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.8)) { appeared = true }
+        }
     }
 
-    private var header: some View {
+    // MARK: Hero clock
+
+    private var hero: some View {
         // Tick on whole seconds, matching the menu bar clock.
         let start = Date(timeIntervalSinceReferenceDate: Date.timeIntervalSinceReferenceDate.rounded(.down))
         return TimelineView(.periodic(from: start, by: 1)) { context in
-            VStack(alignment: .leading, spacing: 2) {
-                Text(format(context.date, "HH:mm:ss"))
-                    .font(.system(size: 34, weight: .semibold, design: .rounded).monospacedDigit())
-                Text("\(format(context.date, "M月d日 EEEE")) · \(settings.shortTimeZoneName(settings.effectiveTimeZone))")
-                    .font(.system(size: 12))
+            let date = context.date
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: settings.useSystemTimeZone ? "location.fill" : "globe.asia.australia.fill")
+                        .symbolRenderingMode(.hierarchical)
+                        .contentTransition(.symbolEffect(.replace))
+                    Text(heroZoneTitle)
+                    Spacer(minLength: 8)
+                    Text(currentEntry.offsetLabel(at: date))
+                        .monospacedDigit()
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+                HStack(alignment: .firstTextBaseline, spacing: 1) {
+                    Text(format(date, "HH:mm"))
+                        .font(.system(size: 58, weight: .semibold, design: .rounded))
+                    Text(format(date, ":ss"))
+                        .font(.system(size: 30, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+                .monospacedDigit()
+                .contentTransition(.numericText(countsDown: false))
+                .animation(.snappy(duration: 0.3), value: date)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+
+                Text("\(format(date, "yyyy年M月d日 EEEE")) · \(settings.shortTimeZoneName(settings.effectiveTimeZone))")
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 6)
-            .padding(.top, 2)
+            .glassEffect(.regular, in: .rect(cornerRadius: Metrics.cardRadius + 4))
+            .glassEffectID("hero", in: glassNamespace)
         }
+    }
+
+    private var currentEntry: TimeZoneEntry {
+        TimeZoneSearch.entry(for: settings.effectiveTimeZone.identifier)
+    }
+
+    private var heroZoneTitle: String {
+        settings.useSystemTimeZone ? "跟随系统 · \(currentEntry.title)" : currentEntry.title
+    }
+
+    // MARK: Display toggles
+
+    private var displayToggles: some View {
+        let toggles: [(title: String, symbol: String, binding: Binding<Bool>)] = [
+            ("日期", "calendar", $settings.showDate),
+            ("星期", "calendar.day.timeline.left", $settings.showWeekday),
+            ("秒钟", "stopwatch.fill", $settings.showSeconds),
+            ("闪动分隔符", "sparkles", $settings.flashSeparators)
+        ]
+        let states = toggles.map { $0.binding.wrappedValue }
+        return HStack(spacing: 8) {
+            ForEach(Array(toggles.enumerated()), id: \.offset) { index, toggle in
+                GlassToggleTile(
+                    title: toggle.title,
+                    symbol: toggle.symbol,
+                    isOn: toggle.binding,
+                    unionID: Self.unionID(for: index, states: states),
+                    namespace: glassNamespace
+                )
+            }
+        }
+    }
+
+    /// Neighbouring tiles that are both on share a union id, so their tinted glass fuses into one bar
+    /// and splits apart again when one in the middle is switched off.
+    private static func unionID(for index: Int, states: [Bool]) -> String {
+        guard states[index] else { return "off-\(index)" }
+        var start = index
+        while start > 0 && states[start - 1] { start -= 1 }
+        return "on-\(start)"
     }
 
     // MARK: Time zone
@@ -238,32 +303,38 @@ private struct ControlPanelContent: View {
         return false
     }
 
-    private var timeZoneModule: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 10) {
+    private var timeZoneCard: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
                 Button {
-                    settings.useSystemTimeZone.toggle()
+                    withAnimation(Metrics.spring) { settings.useSystemTimeZone.toggle() }
                 } label: {
-                    ToggleCircle(symbol: "location.fill", isOn: settings.useSystemTimeZone)
+                    StateCircle(symbol: "location.fill", isOn: settings.useSystemTimeZone)
                 }
                 .buttonStyle(.plain)
-                .help("跟随系统时区")
+                .help(settings.useSystemTimeZone ? "改为自选时区" : "跟随系统时区")
 
-                TileLabel(
+                CardLabel(
                     title: "时区",
                     subtitle: settings.useSystemTimeZone
                         ? "跟随系统 · \(settings.shortTimeZoneName(settings.effectiveTimeZone))"
-                        : "\(zoneTitle(settings.timeZoneIdentifier)) · \(settings.shortTimeZoneName(settings.effectiveTimeZone))"
+                        : "\(currentEntry.title) · \(settings.shortTimeZoneName(settings.effectiveTimeZone))"
                 )
 
                 Spacer(minLength: 4)
 
-                PillButton(
-                    title: isSearchingClockZone ? "完成" : "搜索",
-                    symbol: isSearchingClockZone ? nil : "magnifyingglass"
-                ) {
-                    expansion = isSearchingClockZone ? nil : .clockTimeZone()
+                Button {
+                    withAnimation(Metrics.spring) {
+                        expansion = isSearchingClockZone ? nil : .clockTimeZone()
+                    }
+                } label: {
+                    Label(isSearchingClockZone ? "完成" : "搜索", systemImage: isSearchingClockZone ? "checkmark" : "magnifyingglass")
+                        .font(.system(size: 12, weight: .semibold))
+                        .contentTransition(.symbolEffect(.replace))
                 }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.capsule)
+                .controlSize(.small)
             }
 
             if case let .clockTimeZone(query) = expansion {
@@ -273,37 +344,36 @@ private struct ControlPanelContent: View {
                     suggestions: settings.quickTimeZoneChoices,
                     initialQuery: query,
                     onSelect: { identifier in
-                        settings.selectClockTimeZone(identifier)
-                        expansion = nil
+                        withAnimation(Metrics.spring) {
+                            settings.selectClockTimeZone(identifier)
+                            expansion = nil
+                        }
                     },
-                    onCancel: { expansion = nil }
+                    onCancel: { withAnimation(Metrics.spring) { expansion = nil } }
                 )
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(8)
-        .moduleBackground()
-    }
-
-    private func zoneTitle(_ identifier: String) -> String {
-        TimeZoneSearch.entry(for: identifier).title
+        .card(id: "timezone", in: glassNamespace)
     }
 
     // MARK: Announcement
 
-    private var announcementModule: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 10) {
+    private var announcementCard: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
                 Button {
-                    settings.announceTime.toggle()
+                    withAnimation(Metrics.spring) { settings.announceTime.toggle() }
                 } label: {
-                    ToggleCircle(
+                    StateCircle(
                         symbol: settings.announceTime ? "speaker.wave.2.fill" : "speaker.slash.fill",
                         isOn: settings.announceTime
                     )
                 }
                 .buttonStyle(.plain)
+                .help(settings.announceTime ? "关闭语音报时" : "开启语音报时")
 
-                TileLabel(title: "语音报时", subtitle: settings.announceTime ? settings.announceInterval : "关")
+                CardLabel(title: "语音报时", subtitle: settings.announceTime ? settings.announceInterval : "关")
                 Spacer(minLength: 4)
 
                 Menu {
@@ -323,26 +393,27 @@ private struct ControlPanelContent: View {
                         }
                     }
                 } label: {
-                    Label(soundLabel, systemImage: "bell")
+                    Label(soundLabel, systemImage: "bell.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
                 }
-                .menuStyle(.borderlessButton)
+                .menuStyle(.button)
+                .buttonStyle(.glass)
+                .buttonBorderShape(.capsule)
+                .controlSize(.small)
                 .fixedSize()
                 .disabled(!settings.announceTime)
-                .help("报时声音")
+                .help("报时声音：\(soundLabel)")
             }
 
-            Picker("时间间隔", selection: $settings.announceInterval) {
-                ForEach(settings.announceIntervalChoices, id: \.self) { interval in
-                    Text(interval).tag(interval)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: .infinity)
+            LiquidSegmentedControl(
+                choices: settings.announceIntervalChoices,
+                selection: $settings.announceInterval
+            )
             .disabled(!settings.announceTime)
+            .opacity(settings.announceTime ? 1 : 0.5)
         }
-        .padding(8)
-        .moduleBackground()
+        .card(id: "announcement", in: glassNamespace)
     }
 
     private var soundLabel: String {
@@ -363,26 +434,31 @@ private struct ControlPanelContent: View {
         return settings.managedTimeZoneApps.first { $0.id == id }
     }
 
-    private var applicationsModule: some View {
+    private var applicationsCard: some View {
         let _ = settings.applicationStatusRevision
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack {
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "app.badge.clock.fill")
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.tint)
                 Text("按指定时区打开")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                 Spacer()
+                Text("自动接管")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
                 Toggle("自动接管", isOn: Binding(
                     get: { settings.allApplicationsAutomaticallyManaged },
-                    set: { settings.setAutomaticLaunchManagementForAll($0) }
+                    set: { value in withAnimation(Metrics.spring) { settings.setAutomaticLaunchManagementForAll(value) } }
                 ))
+                .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.mini)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
                 .disabled(settings.managedTimeZoneApps.isEmpty)
                 .help("开启后，从 Dock 或访达打开的白名单应用也会被自动切换到指定时区")
             }
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 52), spacing: 6)], spacing: 8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 60), spacing: 4)], spacing: 10) {
                 ForEach(settings.managedTimeZoneApps) { app in
                     applicationCell(app)
                 }
@@ -390,8 +466,7 @@ private struct ControlPanelContent: View {
             }
 
             if let app = editingApplication {
-                VStack(alignment: .leading, spacing: 6) {
-                    Divider()
+                VStack(alignment: .leading, spacing: 8) {
                     Text("为「\(app.displayName)」选择时区")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
@@ -401,21 +476,23 @@ private struct ControlPanelContent: View {
                         suggestions: settings.quickTimeZoneChoices,
                         listHeight: 168,
                         onSelect: { identifier in
-                            settings.setTimeZone(identifier, forApplication: app.id)
-                            expansion = nil
+                            withAnimation(Metrics.spring) {
+                                settings.setTimeZone(identifier, forApplication: app.id)
+                                expansion = nil
+                            }
                         },
-                        onCancel: { expansion = nil }
+                        onCancel: { withAnimation(Metrics.spring) { expansion = nil } }
                     )
                 }
+                .transition(.opacity.combined(with: .move(edge: .top)))
             } else {
                 Text(settings.managedTimeZoneApps.isEmpty ? "添加应用后，点按即可按指定时区打开" : "点按打开 · 右键更改时区或自动接管")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
             }
         }
-        .padding(8)
-        .moduleBackground()
+        .card(id: "applications", in: glassNamespace)
     }
 
     private func applicationCell(_ app: ManagedTimeZoneApp) -> some View {
@@ -425,41 +502,46 @@ private struct ControlPanelContent: View {
         return Button {
             actions.launch(app)
         } label: {
-            VStack(spacing: 2) {
+            VStack(spacing: 3) {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: app.applicationURL.path))
                     .resizable()
-                    .frame(width: 32, height: 32)
+                    .frame(width: 38, height: 38)
                     .overlay(alignment: .bottomTrailing) {
                         if let color = statusColor(status) {
                             Circle()
-                                .fill(color)
-                                .frame(width: 8, height: 8)
-                                .overlay(Circle().stroke(.background, lineWidth: 1.5))
+                                .fill(color.gradient)
+                                .frame(width: 10, height: 10)
+                                .overlay(Circle().strokeBorder(.white.opacity(0.9), lineWidth: 1.5))
+                                .offset(x: 2, y: 2)
                         }
                     }
                     .overlay(alignment: .topLeading) {
                         if app.automaticallyManageLaunches {
                             Image(systemName: "bolt.circle.fill")
-                                .font(.system(size: 11))
+                                .font(.system(size: 13))
+                                .symbolRenderingMode(.palette)
                                 .foregroundStyle(.white, Color.accentColor)
-                                .offset(x: -3, y: -3)
+                                .offset(x: -4, y: -4)
+                                .transition(.scale.combined(with: .opacity))
                         }
                     }
                 Text(app.displayName)
-                    .font(.system(size: 10))
+                    .font(.system(size: 10.5, weight: .medium))
                     .lineLimit(1)
                 Text(entry.title)
-                    .font(.system(size: 9))
+                    .font(.system(size: 9.5))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 3)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isEditing ? Color.accentColor.opacity(0.18) : Color.clear)
-            )
-            .contentShape(Rectangle())
+            .padding(.vertical, 6)
+            .background {
+                if isEditing {
+                    RoundedRectangle(cornerRadius: Metrics.innerRadius, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.2))
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: Metrics.innerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
         .help("\(app.displayName) · \(entry.title) \(entry.offsetLabel()) · \(status.menuLabel)")
@@ -467,10 +549,10 @@ private struct ControlPanelContent: View {
             Button(status == .notRunning ? "按「\(entry.title)」时区打开" : "按「\(entry.title)」时区重新打开") {
                 actions.launch(app)
             }
-            Button("更改时区…") { expansion = .applicationTimeZone(app.id) }
+            Button("更改时区…") { withAnimation(Metrics.spring) { expansion = .applicationTimeZone(app.id) } }
             Toggle("自动接管", isOn: Binding(
                 get: { app.automaticallyManageLaunches },
-                set: { _ in settings.toggleAutomaticLaunchManagement(for: app.id) }
+                set: { _ in withAnimation(Metrics.spring) { settings.toggleAutomaticLaunchManagement(for: app.id) } }
             ))
             Divider()
             Button("在访达中显示") { actions.reveal(app) }
@@ -480,23 +562,23 @@ private struct ControlPanelContent: View {
 
     private var addApplicationCell: some View {
         Button(action: actions.addApplications) {
-            VStack(spacing: 2) {
+            VStack(spacing: 3) {
                 Image(systemName: "plus")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 32, height: 32)
+                    .frame(width: 38, height: 38)
                     .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(Color.secondary.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(Color.secondary.opacity(0.45), style: StrokeStyle(lineWidth: 1.2, dash: [4, 3]))
                     )
                 Text("添加")
-                    .font(.system(size: 10))
+                    .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(.secondary)
                 Text(" ")
-                    .font(.system(size: 9))
+                    .font(.system(size: 9.5))
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 3)
+            .padding(.vertical, 6)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -506,16 +588,38 @@ private struct ControlPanelContent: View {
     // MARK: Footer
 
     private var footer: some View {
-        HStack {
-            Button("详细设置…", action: actions.openSettings)
+        HStack(spacing: 8) {
+            Button(action: actions.openSettings) {
+                Label("详细设置", systemImage: "gearshape.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .padding(.horizontal, 4)
+            }
+            .buttonStyle(.glass)
+            .controlSize(.large)
+            .glassEffectID("settings", in: glassNamespace)
+
             Spacer()
-            Button("退出", action: actions.quit)
+
+            Button(action: actions.checkForUpdates) {
+                Image(systemName: "arrow.trianglehead.2.clockwise")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .controlSize(.large)
+            .help("检查更新…")
+            .glassEffectID("updates", in: glassNamespace)
+
+            Button(action: actions.quit) {
+                Image(systemName: "power")
+                    .font(.system(size: 13, weight: .bold))
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .controlSize(.large)
+            .help("退出北京时间")
+            .glassEffectID("quit", in: glassNamespace)
         }
-        .buttonStyle(.plain)
-        .font(.system(size: 12))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 6)
-        .padding(.bottom, 2)
     }
 
     private func format(_ date: Date, _ pattern: String) -> String {
@@ -535,96 +639,136 @@ private struct ControlPanelContent: View {
     }
 }
 
-private struct ToggleTile: View {
+// MARK: - Components
+
+/// A glass tile that turns into tinted glass when on. Adjacent "on" tiles fuse through `glassEffectUnion`.
+private struct GlassToggleTile: View {
     let title: String
     let symbol: String
     @Binding var isOn: Bool
+    let unionID: String
+    let namespace: Namespace.ID
 
     var body: some View {
-        Button {
-            isOn.toggle()
-        } label: {
-            HStack(spacing: 8) {
-                ToggleCircle(symbol: symbol, isOn: isOn)
-                TileLabel(title: title, subtitle: isOn ? "开" : "关")
-                Spacer(minLength: 0)
-            }
-            .padding(8)
-            .moduleBackground()
-            .contentShape(Rectangle())
+        // The label is the glass content; the Button is a transparent overlay outside the union.
+        // A glassEffectUnion that contains a Button inside a GlassEffectContainer sends SwiftUI's
+        // key-view-loop builder into an endless loop when the panel becomes key (macOS 26 SDK).
+        VStack(spacing: 6) {
+            Image(systemName: symbol)
+                .font(.system(size: 18, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
+                .symbolEffect(.bounce, value: isOn)
+                .frame(height: 22)
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
-        .buttonStyle(.plain)
+        .foregroundStyle(isOn ? Color.white : Color.primary)
+        .frame(maxWidth: .infinity)
+        .frame(height: 68)
+        .glassEffect(
+            isOn ? .regular.tint(Color.accentColor.opacity(0.9)).interactive() : .regular.interactive(),
+            in: .rect(cornerRadius: 22)
+        )
+        .glassEffectUnion(id: unionID, namespace: namespace)
+        .glassEffectID("toggle-\(title)", in: namespace)
+        .overlay {
+            Button {
+                withAnimation(Metrics.spring) { isOn.toggle() }
+            } label: {
+                Color.clear
+                    .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(title)
+            .accessibilityValue(isOn ? "开" : "关")
+        }
+        .help("\(isOn ? "隐藏" : "显示")\(title)")
     }
 }
 
-private struct ToggleCircle: View {
+/// Solid state indicator used inside glass cards (glass on glass would muddy the card).
+private struct StateCircle: View {
     let symbol: String
     let isOn: Bool
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: 13, weight: .medium))
+            .font(.system(size: 14, weight: .semibold))
+            .symbolRenderingMode(.hierarchical)
             .foregroundStyle(isOn ? Color.white : Color.primary)
-            .frame(width: 28, height: 28)
-            .background(Circle().fill(isOn ? Color.accentColor : Color.primary.opacity(0.1)))
-            .animation(.easeOut(duration: 0.15), value: isOn)
+            .contentTransition(.symbolEffect(.replace))
+            .frame(width: 36, height: 36)
+            .background {
+                Circle()
+                    .fill(isOn ? AnyShapeStyle(Color.accentColor.gradient) : AnyShapeStyle(.quaternary))
+            }
+            .contentShape(Circle())
     }
 }
 
-private struct PillButton: View {
-    let title: String
-    let symbol: String?
-    let action: () -> Void
+/// Capsule segmented control whose selection pill slides between segments with a spring.
+private struct LiquidSegmentedControl: View {
+    let choices: [String]
+    @Binding var selection: String
+    @Namespace private var namespace
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 3) {
-                if let symbol {
-                    Image(systemName: symbol)
-                        .font(.system(size: 10, weight: .semibold))
+        HStack(spacing: 2) {
+            ForEach(choices, id: \.self) { choice in
+                let isSelected = choice == selection
+                Button {
+                    withAnimation(Metrics.spring) { selection = choice }
+                } label: {
+                    Text(choice)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                        .foregroundStyle(isSelected ? Color.white : Color.primary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 28)
+                        .background {
+                            if isSelected {
+                                Capsule()
+                                    .fill(Color.accentColor.gradient)
+                                    .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+                                    .matchedGeometryEffect(id: "selection", in: namespace)
+                            }
+                        }
+                        .contentShape(Capsule())
                 }
-                Text(title)
-                    .font(.system(size: 11, weight: .medium))
+                .buttonStyle(.plain)
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(Color.primary.opacity(0.08)))
-            .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .padding(3)
+        .background(Capsule().fill(.quaternary))
     }
 }
 
-private struct TileLabel: View {
+private struct CardLabel: View {
     let title: String
     let subtitle: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
+        VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .lineLimit(1)
             Text(subtitle)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .contentTransition(.opacity)
         }
     }
 }
 
-private struct ModuleBackground: ViewModifier {
-    @Environment(\.colorScheme) private var colorScheme
-
-    func body(content: Content) -> some View {
-        content.background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white.opacity(colorScheme == .dark ? 0.08 : 0.45))
-        )
-    }
-}
-
 private extension View {
-    func moduleBackground() -> some View {
-        modifier(ModuleBackground())
+    /// A floating Liquid Glass card. Its size animates when content expands, so the glass itself morphs.
+    func card(id: String, in namespace: Namespace.ID) -> some View {
+        padding(Metrics.cardPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .containerShape(.rect(cornerRadius: Metrics.cardRadius))
+            .glassEffect(.regular, in: .rect(cornerRadius: Metrics.cardRadius))
+            .glassEffectID(id, in: namespace)
     }
 }
