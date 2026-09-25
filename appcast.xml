@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sparkle update feed for this branch. scripts/release.sh inserts new items below the marker. -->
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>北京时间 · Beijing Menu Bar Clock</title>
+    <link>https://github.com/Functionhx/beijing-menu-bar-clock</link>
+    <language>zh-CN</language>
+    <!-- items -->
+  </channel>
+</rss>
