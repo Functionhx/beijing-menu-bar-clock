@@ -18,19 +18,25 @@ final class LoginItem: ObservableObject {
 
     var subtitle: String { isEnabled ? "开" : "关" }
 
-    private var label: String { Bundle.main.bundleIdentifier ?? "com.chen.dualtime" }
+    /// Nil for unbundled test builds, which must never touch the installed app's LaunchAgent.
+    private var label: String? { Bundle.main.bundleIdentifier }
 
-    private var agentURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents/\(label).plist")
+    private var agentURL: URL? {
+        label.map {
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents/\($0).plist")
+        }
     }
 
     func refresh() {
-        isEnabled = FileManager.default.fileExists(atPath: agentURL.path)
+        isEnabled = agentURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
     }
 
     func setEnabled(_ enabled: Bool) {
         lastError = nil
+        guard let label, let agentURL else {
+            lastError = "仅安装版可用"
+            return
+        }
         do {
             if enabled {
                 try FileManager.default.createDirectory(
@@ -62,6 +68,7 @@ final class LoginItem: ObservableObject {
 
     /// The previous build registered through SMAppService; drop that record so the app isn't listed twice.
     private func removeServiceManagementRegistration() {
+        guard label != nil else { return }
         let service = SMAppService.mainApp
         guard service.status == .enabled || service.status == .requiresApproval else { return }
         service.unregister { _ in }

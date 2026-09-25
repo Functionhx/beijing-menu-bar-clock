@@ -238,7 +238,6 @@ private struct ControlPanelContent: View {
                 }
             }
             tabContent
-                .id(tab)
             GlassEffectContainer(spacing: 6) {
                 footer
             }
@@ -254,22 +253,32 @@ private struct ControlPanelContent: View {
         }
     }
 
-    /// Each tab gets a fresh glass container. Views inserted into an existing GlassEffectContainer after it first
-    /// rendered stay visible but never receive clicks (macOS 26), so switching tabs rebuilds the container.
+    /// All tabs stay mounted and the hidden ones collapse to zero height, so switching tabs doesn't rebuild
+    /// any card (the calendar keeps its month and selection). Cards inserted into an existing
+    /// GlassEffectContainer after its first render never receive clicks (macOS 26), so tab pages are not
+    /// wrapped in a container.
     private var tabContent: some View {
-        GlassEffectContainer(spacing: 6) {
-            VStack(spacing: Metrics.spacing) {
-                switch tab {
-                case .calendar:
-                    CalendarCard(settings: settings, namespace: glassNamespace)
-                case .clock:
-                    displayToggles
-                    launchAtLoginCard
-                    timeZoneCard
-                    announcementCard
-                case .applications:
-                    applicationsCard
-                }
+        VStack(spacing: 0) {
+            ForEach(PanelTab.allCases) { item in
+                tabPage(item)
+                    .collapsed(item != tab)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func tabPage(_ item: PanelTab) -> some View {
+        VStack(spacing: Metrics.spacing) {
+            switch item {
+            case .calendar:
+                CalendarCard(settings: settings, namespace: glassNamespace)
+            case .clock:
+                displayToggles
+                launchAtLoginCard
+                timeZoneCard
+                announcementCard
+            case .applications:
+                applicationsCard
             }
         }
     }
@@ -394,52 +403,12 @@ private struct ControlPanelContent: View {
     // MARK: Display toggles
 
     private var displayToggles: some View {
-        let toggles: [(title: String, symbol: String, binding: Binding<Bool>)] = [
-            ("日期", "calendar", $settings.showDate),
-            ("星期", "calendar.day.timeline.left", $settings.showWeekday),
-            ("秒钟", "stopwatch.fill", $settings.showSeconds),
-            ("闪动分隔符", "sparkles", $settings.flashSeparators)
-        ]
-        let states = toggles.map { $0.binding.wrappedValue }
-        return HStack(spacing: 8) {
-            ForEach(Array(toggles.enumerated()), id: \.offset) { index, toggle in
-                GlassToggleTile(
-                    title: toggle.title,
-                    symbol: toggle.symbol,
-                    isOn: toggle.binding.wrappedValue,
-                    unionID: Self.unionID(for: index, states: states),
-                    namespace: glassNamespace
-                )
-            }
+        HStack(spacing: 8) {
+            GlassToggleTile(title: "日期", symbol: "calendar", isOn: $settings.showDate)
+            GlassToggleTile(title: "星期", symbol: "calendar.day.timeline.left", isOn: $settings.showWeekday)
+            GlassToggleTile(title: "秒钟", symbol: "stopwatch.fill", isOn: $settings.showSeconds)
+            GlassToggleTile(title: "闪动分隔符", symbol: "sparkles", isOn: $settings.flashSeparators)
         }
-        // Hit targets live in a separate row above the glass. When tiles fuse through glassEffectUnion the
-        // merged glass is drawn by the last member and swallows clicks meant for the earlier tiles, so
-        // per-tile buttons stop working (e.g. 日期 and 星期 while 秒钟 is also on).
-        .overlay {
-            HStack(spacing: 8) {
-                ForEach(Array(toggles.enumerated()), id: \.offset) { _, toggle in
-                    Button {
-                        withAnimation(Metrics.spring) { toggle.binding.wrappedValue.toggle() }
-                    } label: {
-                        Color.clear
-                            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(toggle.title)
-                    .accessibilityValue(toggle.binding.wrappedValue ? "开" : "关")
-                    .help("\(toggle.binding.wrappedValue ? "隐藏" : "显示")\(toggle.title)")
-                }
-            }
-        }
-    }
-
-    /// Neighbouring tiles that are both on share a union id, so their tinted glass fuses into one bar
-    /// and splits apart again when one in the middle is switched off.
-    private static func unionID(for index: Int, states: [Bool]) -> String {
-        guard states[index] else { return "off-\(index)" }
-        var start = index
-        while start > 0 && states[start - 1] { start -= 1 }
-        return "on-\(start)"
     }
 
     // MARK: Time zone
@@ -787,38 +756,39 @@ private struct ControlPanelContent: View {
 
 // MARK: - Components
 
-/// A glass tile that turns into tinted glass when on. Adjacent "on" tiles fuse through `glassEffectUnion`.
+/// A separate glass tile per setting that turns into tinted glass when on.
 private struct GlassToggleTile: View {
     let title: String
     let symbol: String
-    let isOn: Bool
-    let unionID: String
-    let namespace: Namespace.ID
+    @Binding var isOn: Bool
 
     var body: some View {
-        // Display only; ControlPanelContent.displayToggles overlays the buttons (see the note there).
-        // Keeping Buttons out of the union also avoids a macOS 26 SDK hang: a glassEffectUnion containing a
-        // Button inside a GlassEffectContainer loops forever building the key view loop when the panel becomes key.
-        VStack(spacing: 6) {
-            Image(systemName: symbol)
-                .font(.system(size: 18, weight: .semibold))
-                .symbolRenderingMode(.hierarchical)
-                .symbolEffect(.bounce, value: isOn)
-                .frame(height: 22)
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+        Button {
+            withAnimation(Metrics.spring) { isOn.toggle() }
+        } label: {
+            VStack(spacing: 6) {
+                Image(systemName: symbol)
+                    .font(.system(size: 18, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .symbolEffect(.bounce, value: isOn)
+                    .frame(height: 22)
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(isOn ? Color.white : Color.primary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 68)
+            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .glassEffect(
+                isOn ? .regular.tint(Color.accentColor.opacity(0.9)).interactive() : .regular.interactive(),
+                in: .rect(cornerRadius: 22)
+            )
         }
-        .foregroundStyle(isOn ? Color.white : Color.primary)
-        .frame(maxWidth: .infinity)
-        .frame(height: 68)
-        .glassEffect(
-            isOn ? .regular.tint(Color.accentColor.opacity(0.9)).interactive() : .regular.interactive(),
-            in: .rect(cornerRadius: 22)
-        )
-        .glassEffectUnion(id: unionID, namespace: namespace)
-        .glassEffectID("toggle-\(title)", in: namespace)
+        .buttonStyle(.plain)
+        .accessibilityValue(isOn ? "开" : "关")
+        .help("\(isOn ? "隐藏" : "显示")\(title)")
     }
 }
 
@@ -897,6 +867,16 @@ struct CardLabel: View {
 }
 
 extension View {
+    /// Hides a mounted view without removing it: zero height, invisible, and out of hit testing. No branching,
+    /// so the view keeps its identity and state. The clip is widened while visible so glass shadows aren't cut.
+    func collapsed(_ isCollapsed: Bool) -> some View {
+        frame(height: isCollapsed ? 0 : nil, alignment: .top)
+            .clipShape(Rectangle().inset(by: isCollapsed ? 0 : -40))
+            .opacity(isCollapsed ? 0 : 1)
+            .allowsHitTesting(!isCollapsed)
+            .accessibilityHidden(isCollapsed)
+    }
+
     /// A floating Liquid Glass card. Its size animates when content expands, so the glass itself morphs.
     func card(id: String, in namespace: Namespace.ID) -> some View {
         padding(Metrics.cardPadding)
