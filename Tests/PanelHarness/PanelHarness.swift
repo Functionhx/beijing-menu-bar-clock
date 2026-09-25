@@ -14,6 +14,7 @@ import SwiftUI
 ///   --reset                    start from default settings
 ///   --settings page            open 详细设置 on a page (e.g. importantDates) and screenshot it to --shot
 ///   --backdrop                 put a colorful wallpaper behind the panel and shoot the region (for docs)
+///   --hold seconds             keep the panel open this long before exiting and print the CPU time it used
 /// After every click it prints the settings, so tests can assert on them.
 @main @MainActor struct PanelHarness {
     static var item: NSStatusItem!
@@ -85,7 +86,22 @@ import SwiftUI
         case type(String)
     }
 
+    static func cpuSeconds() -> Double {
+        var usage = rusage()
+        getrusage(RUSAGE_SELF, &usage)
+        return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1e6
+    }
+
     static func run(_ clicks: ArraySlice<Step>, _ panel: NSWindow) {
+        if clicks.isEmpty, let hold = arg("hold").flatMap(Double.init) {
+            let start = cpuSeconds()
+            DispatchQueue.main.asyncAfter(deadline: .now() + hold) {
+                let used = cpuSeconds() - start
+                print(String(format: "panel open %.0fs: %.2fs CPU (%.1f%%), still visible: %@", hold, used, used / hold * 100, panel.isVisible ? "yes" : "no"))
+                exit(0)
+            }
+            return
+        }
         guard let step = clicks.first else {
             if let path = arg("shot") {
                 let p = Process()
