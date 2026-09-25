@@ -16,12 +16,11 @@ struct SettingsView: View {
                         HStack {
                             Text("自选时区")
                             Spacer()
-                            Picker("", selection: $settings.timeZoneIdentifier) {
-                                ForEach(settings.timeZoneChoices, id: \.self) { identifier in
-                                    Text(settings.timeZoneLabel(identifier)).tag(identifier)
-                                }
-                            }
-                            .labelsHidden()
+                            TimeZoneSearchButton(
+                                settings: settings,
+                                identifier: settings.timeZoneIdentifier,
+                                onSelect: settings.selectClockTimeZone
+                            )
                             .frame(width: 290)
                         }
                         .disabled(settings.useSystemTimeZone)
@@ -190,12 +189,11 @@ struct SettingsView: View {
             }
             .frame(width: 155, alignment: .leading)
 
-            Picker("时区", selection: app.timeZoneIdentifier) {
-                ForEach(settings.timeZoneChoices, id: \.self) { identifier in
-                    Text(settings.timeZoneLabel(identifier)).tag(identifier)
-                }
-            }
-            .labelsHidden()
+            TimeZoneSearchButton(
+                settings: settings,
+                identifier: value.timeZoneIdentifier,
+                onSelect: { settings.setTimeZone($0, forApplication: value.id) }
+            )
             .frame(maxWidth: .infinity)
 
             Button(status == .notRunning ? "打开" : "重启") {
@@ -229,6 +227,48 @@ struct SettingsView: View {
         case .applied: return .green
         case .notApplied, .mismatched: return .orange
         case .notRunning, .unavailable: return .secondary
+        }
+    }
+}
+
+/// Button showing the chosen zone; opens a searchable list in a popover.
+private struct TimeZoneSearchButton: View {
+    @ObservedObject var settings: ClockSettings
+    let identifier: String
+    let onSelect: (String) -> Void
+    @State private var isSearching = false
+
+    var body: some View {
+        let entry = TimeZoneSearch.entry(for: identifier)
+        Button {
+            isSearching.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Text(entry.title)
+                Text("\(entry.localizedName) · \(entry.offsetLabel())")
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .help(identifier)
+        .popover(isPresented: $isSearching, arrowEdge: .bottom) {
+            TimeZoneSearchView(
+                current: identifier,
+                recents: settings.recentTimeZoneIdentifiers,
+                suggestions: settings.quickTimeZoneChoices,
+                listHeight: 280,
+                onSelect: { selected in
+                    onSelect(selected)
+                    isSearching = false
+                },
+                onCancel: { isSearching = false }
+            )
+            .padding(10)
+            .frame(width: 340)
         }
     }
 }

@@ -18,6 +18,7 @@ final class ClockSettings: ObservableObject {
         static let timeZoneIdentifier = "timeZoneIdentifier"
         static let useSystemTimeZone = "useSystemTimeZone"
         static let managedTimeZoneApps = "managedTimeZoneApps"
+        static let recentTimeZoneIdentifiers = "recentTimeZoneIdentifiers"
     }
 
     let soundChoices = ["系统声音", "Glass", "Ping", "Pop", "Tink", "无", "自定义…"]
@@ -38,6 +39,9 @@ final class ClockSettings: ObservableObject {
     @Published var customSoundPath: String { didSet { save(Key.customSoundPath, customSoundPath) } }
     @Published var timeZoneIdentifier: String { didSet { save(Key.timeZoneIdentifier, timeZoneIdentifier) } }
     @Published var useSystemTimeZone: Bool { didSet { save(Key.useSystemTimeZone, useSystemTimeZone) } }
+    @Published private(set) var recentTimeZoneIdentifiers: [String] {
+        didSet { defaults.set(recentTimeZoneIdentifiers, forKey: Key.recentTimeZoneIdentifiers) }
+    }
     @Published var managedTimeZoneApps: [ManagedTimeZoneApp] {
         didSet {
             saveManagedApps()
@@ -74,6 +78,7 @@ final class ClockSettings: ObservableObject {
         customSoundPath = defaults.string(forKey: Key.customSoundPath) ?? ""
         timeZoneIdentifier = defaults.string(forKey: Key.timeZoneIdentifier) ?? "Asia/Shanghai"
         useSystemTimeZone = defaults.bool(forKey: Key.useSystemTimeZone)
+        recentTimeZoneIdentifiers = defaults.stringArray(forKey: Key.recentTimeZoneIdentifiers) ?? []
 
         if let data = defaults.data(forKey: Key.managedTimeZoneApps),
            let storedApps = try? JSONDecoder().decode([ManagedTimeZoneApp].self, from: data) {
@@ -89,6 +94,23 @@ final class ClockSettings: ObservableObject {
             return .autoupdatingCurrent
         }
         return TimeZone(identifier: timeZoneIdentifier) ?? TimeZone(identifier: "Asia/Shanghai")!
+    }
+
+    /// Switches the menu bar clock to a fixed zone and remembers it as recently used.
+    func selectClockTimeZone(_ identifier: String) {
+        useSystemTimeZone = false
+        timeZoneIdentifier = identifier
+        noteRecentTimeZone(identifier)
+    }
+
+    func setTimeZone(_ identifier: String, forApplication id: UUID) {
+        guard let index = managedTimeZoneApps.firstIndex(where: { $0.id == id }) else { return }
+        managedTimeZoneApps[index].timeZoneIdentifier = identifier
+        noteRecentTimeZone(identifier)
+    }
+
+    func noteRecentTimeZone(_ identifier: String) {
+        recentTimeZoneIdentifiers = Array(([identifier] + recentTimeZoneIdentifiers.filter { $0 != identifier }).prefix(5))
     }
 
     func shortTimeZoneName(_ timeZone: TimeZone) -> String {
