@@ -20,6 +20,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self?.controlPanel.close()
                     self?.settings.launch(app)
                 },
+                reveal: { [weak self] app in
+                    self?.controlPanel.close()
+                    self?.settings.reveal(app)
+                },
+                addApplications: { [weak self] in
+                    self?.runFromPanel { $0.chooseApplications() }
+                },
+                chooseCustomSound: { [weak self] in
+                    self?.runFromPanel { $0.chooseCustomSound() }
+                },
                 quit: { [weak self] in self?.quitApp() }
             )
         )
@@ -27,6 +37,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return controller
     }()
     private var lastAnnouncementMinute = ""
+
+    /// Open/alert panels can't sit on top of the control panel, so close it and bring the app forward first.
+    private func runFromPanel(_ body: @escaping (ClockSettings) -> Void) {
+        controlPanel.close()
+        NSApp.activate(ignoringOtherApps: true)
+        DispatchQueue.main.async { [settings] in body(settings) }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureStatusItem()
@@ -80,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func configureMenu() {
         menu.delegate = self
 
-        let options = NSMenuItem(title: "时钟选项…", action: #selector(showSettings), keyEquivalent: ",")
+        let options = NSMenuItem(title: "详细设置…", action: #selector(showSettings), keyEquivalent: ",")
         options.target = self
         menu.addItem(options)
 
@@ -227,7 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self?.settingsWindow?.close()
             }
             let window = NSWindow(contentViewController: NSHostingController(rootView: view))
-            window.title = "时钟选项"
+            window.title = "详细设置"
             window.styleMask = [.titled, .closable]
             window.isReleasedWhenClosed = false
             window.center()

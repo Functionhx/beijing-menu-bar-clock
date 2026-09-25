@@ -4,6 +4,9 @@ import SwiftUI
 struct ControlPanelActions {
     let openSettings: () -> Void
     let launch: (ManagedTimeZoneApp) -> Void
+    let reveal: (ManagedTimeZoneApp) -> Void
+    let addApplications: () -> Void
+    let chooseCustomSound: () -> Void
     let quit: () -> Void
 }
 
@@ -15,20 +18,34 @@ private final class ControlPanelWindow: NSPanel {
     }
 }
 
+/// Hosting view that reports SwiftUI size changes so the panel can grow and shrink with its content.
+private final class ResizingHostingView<Content: View>: NSHostingView<Content> {
+    var onIntrinsicSizeChange: (() -> Void)?
+
+    override func invalidateIntrinsicContentSize() {
+        super.invalidateIntrinsicContentSize()
+        onIntrinsicSizeChange?()
+    }
+}
+
 /// Control Center–style panel that drops down from the status item on left click.
 @MainActor
 final class ControlPanelController: NSObject, NSWindowDelegate {
     private let panel: ControlPanelWindow
-    private let hostingView: NSHostingView<ControlPanelView>
+    private let hostingView: ResizingHostingView<ControlPanelView>
     private let settings: ClockSettings
+    private let actions: ControlPanelActions
     private var outsideClickMonitor: Any?
     private var lastClosed = Date.distantPast
+    private var session = 0
+    private var resizeScheduled = false
     private(set) var isOpen = false
     var onClose: (() -> Void)?
 
     init(settings: ClockSettings, actions: ControlPanelActions) {
         self.settings = settings
-        hostingView = NSHostingView(rootView: ControlPanelView(settings: settings, actions: actions))
+        self.actions = actions
+        hostingView = ResizingHostingView(rootView: ControlPanelView(settings: settings, actions: actions))
         panel = ControlPanelWindow(
             contentRect: .zero,
             styleMask: [.borderless, .nonactivatingPanel],
@@ -46,16 +63,27 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
         panel.hidesOnDeactivate = false
         panel.delegate = self
         panel.contentView = makeBackground(containing: hostingView)
+        hostingView.onIntrinsicSizeChange = { [weak self] in self?.scheduleResize() }
     }
 
     /// True right after the panel closed, so the same status item click that dismissed it doesn't reopen it.
     var justClosed: Bool { Date().timeIntervalSince(lastClosed) < 0.25 }
 
-    func show(below button: NSStatusBarButton) {
+    /// Shows the panel under the status item, optionally with a section already expanded (e.g. time zone search).
+    func show(below button: NSStatusBarButton, expanding expansion: ControlPanelView.Expansion? = nil) {
         guard let buttonWindow = button.window,
               let screen = buttonWindow.screen ?? NSScreen.main else { return }
 
+        // A fresh view identity each time, so searches and sub-pages start collapsed.
+        session += 1
+        hostingView.rootView = ControlPanelView(
+            settings: settings,
+            actions: actions,
+            session: session,
+            initialExpansion: expansion
+        )
         settings.refreshApplicationStatuses()
+        hostingView.layoutSubtreeIfNeeded()
         let size = hostingView.fittingSize
         let anchor = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
         let visible = screen.visibleFrame
@@ -64,6 +92,7 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
 
         panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
         panel.makeKeyAndOrderFront(nil)
+        panel.invalidateShadow()
         isOpen = true
 
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
@@ -89,6 +118,24 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
         close()
     }
 
+    private func scheduleResize() {
+        guard isOpen, !resizeScheduled else { return }
+        resizeScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.resizeScheduled = false
+            guard self.isOpen else { return }
+            let size = self.hostingView.fittingSize
+            var frame = self.panel.frame
+            guard abs(frame.height - size.height) > 0.5 else { return }
+            // Keep the top edge pinned under the menu bar.
+            frame.origin.y = frame.maxY - size.height
+            frame.size.height = size.height
+            self.panel.setFrame(frame, display: true)
+            self.panel.invalidateShadow()
+        }
+    }
+
     private func makeBackground(containing content: NSView) -> NSView {
         let cornerRadius: CGFloat = 18
         content.autoresizingMask = [.width, .height]
@@ -97,7 +144,6 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
             let glass = NSGlassEffectView()
             glass.cornerRadius = cornerRadius
             glass.contentView = content
-            // The glass draws its own rounded shadow; the window shadow would be rectangular.
             panel.hasShadow = false
             return glass
         }
@@ -125,8 +171,26 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
 }
 
 struct ControlPanelView: View {
+    enum Expansion: Equatable {
+        case clockTimeZone(query: String = "")
+        case applicationTimeZone(UUID)
+    }
+
+    let settings: ClockSettings
+    let actions: ControlPanelActions
+    var session = 0
+    var initialExpansion: Expansion?
+
+    var body: some View {
+        ControlPanelContent(settings: settings, actions: actions, expansion: initialExpansion)
+            .id(session)
+    }
+}
+
+private struct ControlPanelContent: View {
     @ObservedObject var settings: ClockSettings
     let actions: ControlPanelActions
+    @State var expansion: ControlPanelView.Expansion?
 
     private let chinese = Locale(identifier: "zh_CN")
 
@@ -167,52 +231,64 @@ struct ControlPanelView: View {
         }
     }
 
+    // MARK: Time zone
+
+    private var isSearchingClockZone: Bool {
+        if case .clockTimeZone = expansion { return true }
+        return false
+    }
+
     private var timeZoneModule: some View {
-        HStack(spacing: 10) {
-            Button {
-                settings.useSystemTimeZone.toggle()
-            } label: {
-                ToggleCircle(symbol: "location.fill", isOn: settings.useSystemTimeZone)
-            }
-            .buttonStyle(.plain)
-            .help("跟随系统时区")
-
-            TileLabel(
-                title: "时区",
-                subtitle: settings.useSystemTimeZone
-                    ? "跟随系统 · \(settings.shortTimeZoneName(settings.effectiveTimeZone))"
-                    : settings.shortTimeZoneName(settings.effectiveTimeZone)
-            )
-
-            Spacer(minLength: 4)
-
-            Menu("切换") {
-                ForEach(quickTimeZones, id: \.self) { identifier in
-                    Button {
-                        settings.useSystemTimeZone = false
-                        settings.timeZoneIdentifier = identifier
-                    } label: {
-                        if !settings.useSystemTimeZone && identifier == settings.timeZoneIdentifier {
-                            Label(settings.timeZoneLabel(identifier), systemImage: "checkmark")
-                        } else {
-                            Text(settings.timeZoneLabel(identifier))
-                        }
-                    }
+        VStack(spacing: 8) {
+            HStack(spacing: 10) {
+                Button {
+                    settings.useSystemTimeZone.toggle()
+                } label: {
+                    ToggleCircle(symbol: "location.fill", isOn: settings.useSystemTimeZone)
                 }
-                Divider()
-                Button("更多时区…", action: actions.openSettings)
+                .buttonStyle(.plain)
+                .help("跟随系统时区")
+
+                TileLabel(
+                    title: "时区",
+                    subtitle: settings.useSystemTimeZone
+                        ? "跟随系统 · \(settings.shortTimeZoneName(settings.effectiveTimeZone))"
+                        : "\(zoneTitle(settings.timeZoneIdentifier)) · \(settings.shortTimeZoneName(settings.effectiveTimeZone))"
+                )
+
+                Spacer(minLength: 4)
+
+                PillButton(
+                    title: isSearchingClockZone ? "完成" : "搜索",
+                    symbol: isSearchingClockZone ? nil : "magnifyingglass"
+                ) {
+                    expansion = isSearchingClockZone ? nil : .clockTimeZone()
+                }
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
+
+            if case let .clockTimeZone(query) = expansion {
+                TimeZoneSearchView(
+                    current: settings.useSystemTimeZone ? nil : settings.timeZoneIdentifier,
+                    recents: settings.recentTimeZoneIdentifiers,
+                    suggestions: settings.quickTimeZoneChoices,
+                    initialQuery: query,
+                    onSelect: { identifier in
+                        settings.selectClockTimeZone(identifier)
+                        expansion = nil
+                    },
+                    onCancel: { expansion = nil }
+                )
+            }
         }
         .padding(8)
         .moduleBackground()
     }
 
-    private var quickTimeZones: [String] {
-        let choices = settings.quickTimeZoneChoices
-        return choices.contains(settings.timeZoneIdentifier) ? choices : [settings.timeZoneIdentifier] + choices
+    private func zoneTitle(_ identifier: String) -> String {
+        TimeZoneSearch.entry(for: identifier).title
     }
+
+    // MARK: Announcement
 
     private var announcementModule: some View {
         VStack(spacing: 8) {
@@ -227,11 +303,32 @@ struct ControlPanelView: View {
                 }
                 .buttonStyle(.plain)
 
-                TileLabel(
-                    title: "语音报时",
-                    subtitle: settings.announceTime ? "\(settings.announceInterval) · \(settings.soundName)" : "关"
-                )
-                Spacer(minLength: 0)
+                TileLabel(title: "语音报时", subtitle: settings.announceTime ? settings.announceInterval : "关")
+                Spacer(minLength: 4)
+
+                Menu {
+                    ForEach(settings.soundChoices, id: \.self) { sound in
+                        Button {
+                            if sound == "自定义…" {
+                                actions.chooseCustomSound()
+                            } else {
+                                settings.soundName = sound
+                            }
+                        } label: {
+                            if sound == settings.soundName {
+                                Label(soundMenuTitle(sound), systemImage: "checkmark")
+                            } else {
+                                Text(soundMenuTitle(sound))
+                            }
+                        }
+                    }
+                } label: {
+                    Label(soundLabel, systemImage: "bell")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .disabled(!settings.announceTime)
+                .help("报时声音")
             }
 
             Picker("时间间隔", selection: $settings.announceInterval) {
@@ -241,10 +338,29 @@ struct ControlPanelView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            .frame(maxWidth: .infinity)
             .disabled(!settings.announceTime)
         }
         .padding(8)
         .moduleBackground()
+    }
+
+    private var soundLabel: String {
+        guard settings.soundName == "自定义…" else { return settings.soundName }
+        guard !settings.customSoundPath.isEmpty else { return "自定义" }
+        return URL(fileURLWithPath: settings.customSoundPath).deletingPathExtension().lastPathComponent
+    }
+
+    private func soundMenuTitle(_ sound: String) -> String {
+        guard sound == "自定义…", !settings.customSoundPath.isEmpty else { return sound }
+        return "自定义：\(URL(fileURLWithPath: settings.customSoundPath).lastPathComponent)…"
+    }
+
+    // MARK: Applications
+
+    private var editingApplication: ManagedTimeZoneApp? {
+        guard case let .applicationTimeZone(id) = expansion else { return nil }
+        return settings.managedTimeZoneApps.first { $0.id == id }
     }
 
     private var applicationsModule: some View {
@@ -254,24 +370,48 @@ struct ControlPanelView: View {
                 Text("按指定时区打开")
                     .font(.system(size: 12, weight: .semibold))
                 Spacer()
-                Button("管理…", action: actions.openSettings)
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                Toggle("自动接管", isOn: Binding(
+                    get: { settings.allApplicationsAutomaticallyManaged },
+                    set: { settings.setAutomaticLaunchManagementForAll($0) }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .disabled(settings.managedTimeZoneApps.isEmpty)
+                .help("开启后，从 Dock 或访达打开的白名单应用也会被自动切换到指定时区")
             }
 
-            if settings.managedTimeZoneApps.isEmpty {
-                Text("尚未添加应用")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-            } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 52), spacing: 6)], spacing: 8) {
-                    ForEach(settings.managedTimeZoneApps) { app in
-                        applicationCell(app)
-                    }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 52), spacing: 6)], spacing: 8) {
+                ForEach(settings.managedTimeZoneApps) { app in
+                    applicationCell(app)
                 }
+                addApplicationCell
+            }
+
+            if let app = editingApplication {
+                VStack(alignment: .leading, spacing: 6) {
+                    Divider()
+                    Text("为「\(app.displayName)」选择时区")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    TimeZoneSearchView(
+                        current: app.timeZoneIdentifier,
+                        recents: settings.recentTimeZoneIdentifiers,
+                        suggestions: settings.quickTimeZoneChoices,
+                        listHeight: 168,
+                        onSelect: { identifier in
+                            settings.setTimeZone(identifier, forApplication: app.id)
+                            expansion = nil
+                        },
+                        onCancel: { expansion = nil }
+                    )
+                }
+            } else {
+                Text(settings.managedTimeZoneApps.isEmpty ? "添加应用后，点按即可按指定时区打开" : "点按打开 · 右键更改时区或自动接管")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity)
             }
         }
         .padding(8)
@@ -280,11 +420,12 @@ struct ControlPanelView: View {
 
     private func applicationCell(_ app: ManagedTimeZoneApp) -> some View {
         let status = settings.launchStatus(for: app)
-        let zone = TimeZone(identifier: app.timeZoneIdentifier).map(settings.shortTimeZoneName) ?? app.timeZoneIdentifier
+        let entry = TimeZoneSearch.entry(for: app.timeZoneIdentifier)
+        let isEditing = editingApplication?.id == app.id
         return Button {
             actions.launch(app)
         } label: {
-            VStack(spacing: 3) {
+            VStack(spacing: 2) {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: app.applicationURL.path))
                     .resizable()
                     .frame(width: 32, height: 32)
@@ -296,20 +437,77 @@ struct ControlPanelView: View {
                                 .overlay(Circle().stroke(.background, lineWidth: 1.5))
                         }
                     }
+                    .overlay(alignment: .topLeading) {
+                        if app.automaticallyManageLaunches {
+                            Image(systemName: "bolt.circle.fill")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.white, Color.accentColor)
+                                .offset(x: -3, y: -3)
+                        }
+                    }
                 Text(app.displayName)
                     .font(.system(size: 10))
                     .lineLimit(1)
+                Text(entry.title)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             .frame(maxWidth: .infinity)
+            .padding(.vertical, 3)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isEditing ? Color.accentColor.opacity(0.18) : Color.clear)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("\(app.displayName) · \(zone) · \(status.menuLabel)")
+        .help("\(app.displayName) · \(entry.title) \(entry.offsetLabel()) · \(status.menuLabel)")
+        .contextMenu {
+            Button(status == .notRunning ? "按「\(entry.title)」时区打开" : "按「\(entry.title)」时区重新打开") {
+                actions.launch(app)
+            }
+            Button("更改时区…") { expansion = .applicationTimeZone(app.id) }
+            Toggle("自动接管", isOn: Binding(
+                get: { app.automaticallyManageLaunches },
+                set: { _ in settings.toggleAutomaticLaunchManagement(for: app.id) }
+            ))
+            Divider()
+            Button("在访达中显示") { actions.reveal(app) }
+            Button("移出白名单", role: .destructive) { settings.removeApplication(id: app.id) }
+        }
     }
+
+    private var addApplicationCell: some View {
+        Button(action: actions.addApplications) {
+            VStack(spacing: 2) {
+                Image(systemName: "plus")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 32, height: 32)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(Color.secondary.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
+                    )
+                Text("添加")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                Text(" ")
+                    .font(.system(size: 9))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 3)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("添加应用到白名单…")
+    }
+
+    // MARK: Footer
 
     private var footer: some View {
         HStack {
-            Button("时钟选项…", action: actions.openSettings)
+            Button("详细设置…", action: actions.openSettings)
             Spacer()
             Button("退出", action: actions.quit)
         }
@@ -370,6 +568,30 @@ private struct ToggleCircle: View {
             .frame(width: 28, height: 28)
             .background(Circle().fill(isOn ? Color.accentColor : Color.primary.opacity(0.1)))
             .animation(.easeOut(duration: 0.15), value: isOn)
+    }
+}
+
+private struct PillButton: View {
+    let title: String
+    let symbol: String?
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                if let symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                Text(title)
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(Color.primary.opacity(0.08)))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 }
 
