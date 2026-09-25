@@ -20,9 +20,8 @@ struct ImportantDatesCard: View {
     @ObservedObject var store = ImportantDateStore.shared
     @Binding var draft: ImportantDate?
     let namespace: Namespace.ID
+    var visibleCount = 3
     let openAll: () -> Void
-
-    private let visibleCount = 3
 
     var body: some View {
         TimelineView(.everyMinute) { _ in

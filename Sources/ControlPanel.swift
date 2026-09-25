@@ -30,11 +30,11 @@ private final class ResizingHostingView<Content: View>: NSHostingView<Content> {
     }
 }
 
-/// Drop-down panel under the status item. The window itself is fully transparent: every card is its own
-/// piece of Liquid Glass floating over the desktop, like Control Center on iOS 26.
+/// Drop-down panel under the status item, styled like macOS 27 Control Center: one Liquid Glass platter
+/// holding translucent modules. The window is transparent around the platter so its shadow isn't clipped.
 @MainActor
 final class ControlPanelController: NSObject, NSWindowDelegate {
-    /// Transparent margin around the cards so glass shadows and the appear animation aren't clipped.
+    /// Transparent margin around the platter so its shadow and the appear animation aren't clipped.
     static let outerPadding: CGFloat = 14
 
     private let panel: ControlPanelWindow
@@ -62,7 +62,7 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
 
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        // Each glass card casts its own soft shadow; a window shadow would outline the transparent margin.
+        // The glass platter casts its own soft shadow; a window shadow would outline the transparent margin.
         panel.hasShadow = false
         panel.level = .popUpMenu
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
@@ -98,7 +98,7 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
         let visible = screen.visibleFrame
         let margin = Self.outerPadding
         let x = min(max(anchor.midX - size.width / 2, visible.minX - margin + 8), visible.maxX - size.width + margin - 8)
-        // The first card sits 6pt under the menu bar; the transparent margin may overlap the menu bar.
+        // The platter sits 6pt under the menu bar; the transparent margin may overlap the menu bar.
         let top = min(anchor.minY, visible.maxY) - 6 + margin
 
         panel.setFrame(NSRect(x: x, y: top - size.height, width: size.width, height: size.height), display: true)
@@ -172,7 +172,7 @@ struct ControlPanelView: View {
                 settings: settings,
                 actions: actions,
                 expansion: initialExpansion,
-                tab: PanelTab.initial(for: initialExpansion)
+                detail: PanelDetail.initial(for: initialExpansion)
             )
             .id(session)
         } else {
@@ -181,34 +181,26 @@ struct ControlPanelView: View {
     }
 }
 
-/// Top-level sections of the panel, shown one at a time under the clock.
-enum PanelTab: String, CaseIterable, Identifiable {
-    case calendar, clock, applications
-
-    var id: String { rawValue }
+/// Pages a module opens inside the panel, the way Control Center modules expand in place.
+enum PanelDetail: Equatable {
+    case timeZone, announcement, applications, calendar, importantDates
 
     var title: String {
         switch self {
+        case .timeZone: return "时区"
+        case .announcement: return "语音报时"
+        case .applications: return "按指定时区打开"
         case .calendar: return "日历"
-        case .clock: return "时钟"
-        case .applications: return "应用"
+        case .importantDates: return "重要日期"
         }
     }
 
-    var symbol: String {
-        switch self {
-        case .calendar: return "calendar"
-        case .clock: return "clock.fill"
-        case .applications: return "app.badge.clock.fill"
-        }
-    }
-
-    /// The panel always opens on the calendar unless it was opened to edit something specific.
-    static func initial(for expansion: ControlPanelView.Expansion?) -> PanelTab {
+    /// The panel opens on the module grid unless it was opened to edit something specific.
+    static func initial(for expansion: ControlPanelView.Expansion?) -> PanelDetail? {
         switch expansion {
-        case .clockTimeZone: return .clock
+        case .clockTimeZone: return .timeZone
         case .applicationTimeZone: return .applications
-        case nil: return .calendar
+        case nil: return nil
         }
     }
 }
@@ -216,7 +208,10 @@ enum PanelTab: String, CaseIterable, Identifiable {
 // MARK: - Layout constants
 
 enum Metrics {
+    /// Width of the glass platter.
     static let width: CGFloat = 340
+    static let platterPadding: CGFloat = 14
+    static let platterRadius: CGFloat = 34
     static let cardRadius: CGFloat = 26
     static let cardPadding: CGFloat = 14
     /// Inner shapes stay concentric with the card: outer radius minus padding.
@@ -229,31 +224,30 @@ private struct ControlPanelContent: View {
     @ObservedObject var settings: ClockSettings
     @ObservedObject var loginItem = LoginItem.shared
     let actions: ControlPanelActions
+    @ObservedObject var dates = ImportantDateStore.shared
     @State var expansion: ControlPanelView.Expansion?
-    @State var tab: PanelTab
+    @State var detail: PanelDetail?
     @State private var importantDraft: ImportantDate?
     @State private var appeared = false
     @Namespace private var glassNamespace
-    @Namespace private var tabNamespace
 
     private let chinese = Locale(identifier: "zh_CN")
 
     var body: some View {
-        // Container spacing is smaller than the gaps between cards, so cards stay separate at rest and
-        // only melt together when a morphing element passes between them.
-        VStack(spacing: Metrics.spacing) {
-            GlassEffectContainer(spacing: 6) {
-                VStack(spacing: Metrics.spacing) {
-                    hero
-                    tabBar
-                }
+        VStack(spacing: ModuleGrid.gap) {
+            suggestionChip
+            // The grid stays mounted while a detail page is open, so coming back doesn't rebuild it.
+            moduleGrid
+                .collapsed(detail != nil)
+            if let detail {
+                detailPage(detail)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
             }
-            tabContent
-            GlassEffectContainer(spacing: 6) {
-                footer
-            }
+            footer
         }
+        .padding(Metrics.platterPadding)
         .frame(width: Metrics.width)
+        .glassEffect(.regular, in: .rect(cornerRadius: Metrics.platterRadius))
         .padding(ControlPanelController.outerPadding)
         .scaleEffect(appeared ? 1 : 0.92, anchor: .top)
         .opacity(appeared ? 1 : 0)
@@ -264,83 +258,297 @@ private struct ControlPanelContent: View {
         }
     }
 
-    /// All tabs stay mounted and the hidden ones collapse to zero height, so switching tabs doesn't rebuild
-    /// any card (the calendar keeps its month and selection). Cards inserted into an existing
-    /// GlassEffectContainer after its first render never receive clicks (macOS 26), so tab pages are not
-    /// wrapped in a container.
-    private var tabContent: some View {
-        VStack(spacing: 0) {
-            ForEach(PanelTab.allCases) { item in
-                tabPage(item)
-                    .collapsed(item != tab)
-            }
+    private func show(_ page: PanelDetail) {
+        withAnimation(Metrics.spring) {
+            detail = page
+            expansion = page == .timeZone ? .clockTimeZone() : nil
         }
     }
 
+    private func back() {
+        withAnimation(Metrics.spring) {
+            detail = nil
+            expansion = nil
+            importantDraft = nil
+        }
+    }
+
+    // MARK: Suggestion
+
+    /// Like Control Center's "recently used" chip: the next important date if it's within a month.
     @ViewBuilder
-    private func tabPage(_ item: PanelTab) -> some View {
-        VStack(spacing: Metrics.spacing) {
-            switch item {
-            case .calendar:
-                // While editing a date the month grid folds away, so the panel doesn't outgrow the screen.
-                CalendarCard(settings: settings, namespace: glassNamespace)
-                    .collapsed(importantDraft != nil)
-                ImportantDatesCard(draft: $importantDraft, namespace: glassNamespace, openAll: actions.openImportantDates)
-            case .clock:
-                displayToggles
-                launchAtLoginCard
-                timeZoneCard
-                announcementCard
-            case .applications:
-                applicationsCard
+    private var suggestionChip: some View {
+        let today = dates.today
+        if detail == nil,
+           let next = dates.upcoming(from: today).first,
+           next.occurrence.end >= today,
+           today.days(until: next.occurrence.start) <= 30 {
+            let countdown = next.item.countdown(for: next.occurrence, today: today)
+            Button { show(.importantDates) } label: {
+                ChipLabel(title: "\(next.item.title) · \(countdown.text)", symbol: next.item.kind.symbol, tint: next.item.kind.tint)
             }
+            .buttonStyle(.plain)
+            .help("查看重要日期")
         }
     }
 
-    // MARK: Hero clock
+    // MARK: Module grid
 
-    private var hero: some View {
+    private var moduleGrid: some View {
+        VStack(spacing: ModuleGrid.gap) {
+            HStack(alignment: .top, spacing: ModuleGrid.gap) {
+                clockModule
+                VStack(spacing: ModuleGrid.gap) {
+                    PillModule(
+                        symbol: "power",
+                        title: "开机启动",
+                        subtitle: loginItem.lastError ?? loginItem.subtitle,
+                        isOn: loginItem.isEnabled,
+                        tint: .green,
+                        toggle: { withAnimation(Metrics.spring) { loginItem.setEnabled(!loginItem.isEnabled) } }
+                    )
+                    PillModule(
+                        symbol: settings.announceTime ? "speaker.wave.2.fill" : "speaker.slash.fill",
+                        title: "语音报时",
+                        subtitle: settings.announceTime ? "\(settings.announceInterval) · \(soundLabel)" : "关",
+                        isOn: settings.announceTime,
+                        tint: .orange,
+                        toggle: { withAnimation(Metrics.spring) { settings.announceTime.toggle() } },
+                        open: { show(.announcement) }
+                    )
+                }
+            }
+
+            HStack(spacing: ModuleGrid.gap) {
+                CircleModule(symbol: "calendar", title: "日期", isOn: settings.showDate) {
+                    withAnimation(Metrics.spring) { settings.showDate.toggle() }
+                }
+                CircleModule(symbol: "calendar.day.timeline.left", title: "星期", isOn: settings.showWeekday) {
+                    withAnimation(Metrics.spring) { settings.showWeekday.toggle() }
+                }
+                CircleModule(symbol: "stopwatch.fill", title: "秒钟", isOn: settings.showSeconds) {
+                    withAnimation(Metrics.spring) { settings.showSeconds.toggle() }
+                }
+                CircleModule(symbol: "sparkles", title: "闪动分隔符", isOn: settings.flashSeparators) {
+                    withAnimation(Metrics.spring) { settings.flashSeparators.toggle() }
+                }
+            }
+
+            HStack(spacing: ModuleGrid.gap) {
+                PillModule(
+                    symbol: settings.useSystemTimeZone ? "location.fill" : "globe.asia.australia.fill",
+                    title: "时区",
+                    subtitle: settings.useSystemTimeZone ? "跟随系统" : currentEntry.title,
+                    isOn: true,
+                    tint: .teal,
+                    toggle: { show(.timeZone) }
+                )
+                let apps = settings.managedTimeZoneApps
+                PillModule(
+                    symbol: "app.badge.clock.fill",
+                    title: "应用",
+                    subtitle: apps.isEmpty ? "未添加" : (settings.allApplicationsAutomaticallyManaged ? "自动接管中" : "\(apps.count) 个应用"),
+                    isOn: settings.allApplicationsAutomaticallyManaged,
+                    tint: .indigo,
+                    toggle: {
+                        guard !apps.isEmpty else { return show(.applications) }
+                        withAnimation(Metrics.spring) {
+                            settings.setAutomaticLaunchManagementForAll(!settings.allApplicationsAutomaticallyManaged)
+                        }
+                    },
+                    open: { show(.applications) }
+                )
+            }
+
+            calendarModule
+            importantDatesModule
+        }
+    }
+
+    /// Two-by-two clock module: time with seconds, date and lunar date. Opens the calendar.
+    private var clockModule: some View {
         // Tick on whole seconds, matching the menu bar clock.
         let start = Date(timeIntervalSinceReferenceDate: Date.timeIntervalSinceReferenceDate.rounded(.down))
         return TimelineView(.periodic(from: start, by: 1)) { context in
             let date = context.date
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
                     Image(systemName: settings.useSystemTimeZone ? "location.fill" : "globe.asia.australia.fill")
                         .symbolRenderingMode(.hierarchical)
-                        .contentTransition(.symbolEffect(.replace))
-                    Text(heroZoneTitle)
-                    Spacer(minLength: 8)
+                    Text(currentEntry.title)
+                        .lineLimit(1)
+                    Spacer(minLength: 2)
                     Text(currentEntry.offsetLabel(at: date))
                         .monospacedDigit()
                 }
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
 
                 HStack(alignment: .firstTextBaseline, spacing: 1) {
                     Text(format(date, "HH:mm"))
-                        .font(.system(size: 58, weight: .semibold, design: .rounded))
+                        .font(.system(size: 38, weight: .semibold, design: .rounded))
                     Text(format(date, ":ss"))
-                        .font(.system(size: 30, weight: .medium, design: .rounded))
+                        .font(.system(size: 17, weight: .medium, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
                 .monospacedDigit()
                 .contentTransition(.numericText(countsDown: false))
                 .animation(.snappy(duration: 0.3), value: date)
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .minimumScaleFactor(0.6)
 
-                Text("\(format(date, "yyyy年M月d日 EEEE")) · \(lunarLabel(date))")
-                    .font(.system(size: 13, weight: .medium))
+                Text(format(date, "M月d日 EEEE"))
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                Text(lunarLabel(date))
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassEffect(.regular, in: .rect(cornerRadius: Metrics.cardRadius + 4))
-            .glassEffectID("hero", in: glassNamespace)
+            .padding(14)
+            .frame(width: ModuleGrid.doubleUnit, height: ModuleGrid.doubleUnit, alignment: .topLeading)
+            .moduleSurface(RoundedRectangle(cornerRadius: ModuleGrid.largeRadius, style: .continuous))
+            .onTapGesture { show(.calendar) }
+            .help("打开日历")
         }
+    }
+
+    /// This week with lunar days and important-date dots. Opens the full calendar.
+    private var calendarModule: some View {
+        TimelineView(.everyMinute) { context in
+            let calendar = CalendarCard.calendar(in: settings.effectiveTimeZone)
+            let today = DayStamp(context.date, calendar: calendar)
+            let weekday = calendar.component(.weekday, from: context.date)
+            let monday = today.adding(days: -((weekday + 5) % 7))
+            let week = (0..<7).map { monday.adding(days: $0) }
+            let marks = dates.entriesByDay(from: week[0], through: week[6])
+            let lunar = LunarCalendar.lunarDate(year: today.year, month: today.month, day: today.day)
+
+            WideModule(title: "日历", open: { show(.calendar) }) {
+                Text("\(lunar.yearName)\(lunar.zodiacName)年 \(lunar.monthName)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            } content: {
+                HStack(spacing: 0) {
+                    ForEach(Array(week.enumerated()), id: \.offset) { index, day in
+                        weekDay(day, label: ["一", "二", "三", "四", "五", "六", "日"][index], isToday: day == today, entries: marks[day] ?? [])
+                    }
+                }
+            }
+        }
+    }
+
+    private func weekDay(_ day: DayStamp, label: String, isToday: Bool, entries: [ImportantDateStore.Entry]) -> some View {
+        let term = SolarTerms.termName(year: day.year, month: day.month, day: day.day)
+        let lunar = LunarCalendar.lunarDate(year: day.year, month: day.month, day: day.day)
+        let isWeekend = label == "六" || label == "日"
+        return VStack(spacing: 3) {
+            Text(label)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(isWeekend ? Color.red.opacity(0.75) : Color.secondary)
+            Text(verbatim: "\(day.day)")
+                .font(.system(size: 14, weight: isToday ? .bold : .medium, design: .rounded).monospacedDigit())
+                .foregroundStyle(isToday ? Color.white : (isWeekend ? Color.red.opacity(0.85) : Color.primary))
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(isToday ? AnyShapeStyle(Color.accentColor.gradient) : AnyShapeStyle(Color.clear)))
+            Text(term ?? lunar.cellLabel)
+                .font(.system(size: 8.5, weight: term != nil ? .semibold : .regular))
+                .foregroundStyle(term != nil ? Color.accentColor : Color.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            HStack(spacing: 2) {
+                ForEach(entries.prefix(3)) { entry in
+                    Circle().fill(entry.item.kind.tint).frame(width: 4, height: 4)
+                }
+            }
+            .frame(height: 4)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// The next two important dates with countdowns. Opens the full list and editor.
+    private var importantDatesModule: some View {
+        TimelineView(.everyMinute) { _ in
+            let today = dates.today
+            let entries = dates.upcoming(from: today)
+            WideModule(title: "重要日期", open: { show(.importantDates) }) {
+                Button {
+                    show(.importantDates)
+                    importantDraft = ImportantDate(start: today)
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .bold))
+                        .frame(width: 22, height: 22)
+                        .moduleSurface(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("添加重要日期")
+            } content: {
+                if entries.isEmpty {
+                    Text("添加生日、考试、报名截止等，到期前提醒你")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(spacing: 6) {
+                        ForEach(entries.prefix(2)) { entry in
+                            let countdown = entry.item.countdown(for: entry.occurrence, today: today)
+                            HStack(spacing: 6) {
+                                Image(systemName: entry.item.kind.symbol)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(entry.item.kind.tint)
+                                    .frame(width: 16)
+                                Text(entry.item.title)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .lineLimit(1)
+                                Text(entry.item.dateLabel(for: entry.occurrence))
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                Spacer(minLength: 4)
+                                Text(countdown.text)
+                                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                                    .foregroundStyle(countdown.caption == "已过去" ? Color.secondary : entry.item.kind.tint)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Detail pages
+
+    private func detailPage(_ page: PanelDetail) -> some View {
+        VStack(spacing: ModuleGrid.gap) {
+            HStack(spacing: 10) {
+                Button(action: back) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .bold))
+                        .frame(width: 30, height: 30)
+                        .moduleSurface(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("返回")
+                Text(page.title)
+                    .font(.system(size: 15, weight: .bold))
+                Spacer()
+            }
+            switch page {
+            case .timeZone:
+                timeZoneCard
+            case .announcement:
+                announcementCard
+            case .applications:
+                applicationsCard
+            case .calendar:
+                CalendarCard(settings: settings, namespace: glassNamespace)
+            case .importantDates:
+                ImportantDatesCard(draft: $importantDraft, namespace: glassNamespace, visibleCount: 6, openAll: actions.openImportantDates)
+            }
+        }
+        .onExitCommand(perform: back)
     }
 
     /// "农历八月十五" plus " · 秋分" on the day of a solar term, by the clock's calendar day.
@@ -352,77 +560,8 @@ private struct ControlPanelContent: View {
         return "农历\(lunar.monthName)\(lunar.dayName)\(term)"
     }
 
-    // MARK: Tabs
-
-    private var tabBar: some View {
-        HStack(spacing: 2) {
-            ForEach(PanelTab.allCases) { item in
-                let isSelected = item == tab
-                Button {
-                    withAnimation(Metrics.spring) {
-                        tab = item
-                        expansion = nil
-                    }
-                } label: {
-                    Label(item.title, systemImage: item.symbol)
-                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(isSelected ? Color.white : Color.primary)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 30)
-                        .background {
-                            if isSelected {
-                                Capsule()
-                                    .fill(Color.accentColor.gradient)
-                                    .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
-                                    .matchedGeometryEffect(id: "selection", in: tabNamespace)
-                            }
-                        }
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(4)
-        .glassEffect(.regular, in: .capsule)
-        .glassEffectID("tabs", in: glassNamespace)
-    }
-
-    // MARK: Launch at login
-
-    private var launchAtLoginCard: some View {
-        HStack(spacing: 12) {
-            Button {
-                withAnimation(Metrics.spring) { loginItem.setEnabled(!loginItem.isEnabled) }
-            } label: {
-                StateCircle(symbol: "power", isOn: loginItem.isEnabled)
-            }
-            .buttonStyle(.plain)
-            .help(loginItem.isEnabled ? "登录 Mac 时不再自动打开" : "登录 Mac 时自动打开")
-
-            CardLabel(title: "开机启动", subtitle: loginItem.lastError ?? loginItem.subtitle)
-            Spacer(minLength: 4)
-        }
-        .card(id: "login", in: glassNamespace)
-    }
-
     private var currentEntry: TimeZoneEntry {
         TimeZoneSearch.entry(for: settings.effectiveTimeZone.identifier)
-    }
-
-    private var heroZoneTitle: String {
-        settings.useSystemTimeZone ? "跟随系统 · \(currentEntry.title)" : currentEntry.title
-    }
-
-    // MARK: Display toggles
-
-    private var displayToggles: some View {
-        HStack(spacing: 8) {
-            GlassToggleTile(title: "日期", symbol: "calendar", isOn: $settings.showDate)
-            GlassToggleTile(title: "星期", symbol: "calendar.day.timeline.left", isOn: $settings.showWeekday)
-            GlassToggleTile(title: "秒钟", symbol: "stopwatch.fill", isOn: $settings.showSeconds)
-            GlassToggleTile(title: "闪动分隔符", symbol: "sparkles", isOn: $settings.flashSeparators)
-        }
     }
 
     // MARK: Time zone
@@ -476,6 +615,8 @@ private struct ControlPanelContent: View {
                         withAnimation(Metrics.spring) {
                             settings.selectClockTimeZone(identifier)
                             expansion = nil
+                            // Picking a zone is the whole point of this page, so go straight back.
+                            if detail == .timeZone { detail = nil }
                         }
                     },
                     onCancel: { withAnimation(Metrics.spring) { expansion = nil } }
@@ -716,39 +857,26 @@ private struct ControlPanelContent: View {
 
     // MARK: Footer
 
+    /// Centered capsules like Control Center's "编辑控制".
     private var footer: some View {
         HStack(spacing: 8) {
             Button(action: actions.openSettings) {
-                Label("详细设置", systemImage: "gearshape.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .padding(.horizontal, 4)
+                ChipLabel(title: "详细设置", symbol: "gearshape.fill")
             }
-            .buttonStyle(.glass)
-            .controlSize(.large)
-            .glassEffectID("settings", in: glassNamespace)
-
-            Spacer()
-
-            Button(action: actions.checkForUpdates) {
-                Image(systemName: "arrow.trianglehead.2.clockwise")
-                    .font(.system(size: 13, weight: .semibold))
+            .buttonStyle(.plain)
+            Menu {
+                Button("检查更新…", action: actions.checkForUpdates)
+                Divider()
+                Button("退出北京时间", action: actions.quit)
+            } label: {
+                ChipLabel(title: "更多", symbol: "ellipsis")
             }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.circle)
-            .controlSize(.large)
-            .help("检查更新…")
-            .glassEffectID("updates", in: glassNamespace)
-
-            Button(action: actions.quit) {
-                Image(systemName: "power")
-                    .font(.system(size: 13, weight: .bold))
-            }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.circle)
-            .controlSize(.large)
-            .help("退出北京时间")
-            .glassEffectID("quit", in: glassNamespace)
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
         }
+        .frame(maxWidth: .infinity)
     }
 
     private func format(_ date: Date, _ pattern: String) -> String {
@@ -769,42 +897,6 @@ private struct ControlPanelContent: View {
 }
 
 // MARK: - Components
-
-/// A separate glass tile per setting that turns into tinted glass when on.
-private struct GlassToggleTile: View {
-    let title: String
-    let symbol: String
-    @Binding var isOn: Bool
-
-    var body: some View {
-        Button {
-            withAnimation(Metrics.spring) { isOn.toggle() }
-        } label: {
-            VStack(spacing: 6) {
-                Image(systemName: symbol)
-                    .font(.system(size: 18, weight: .semibold))
-                    .symbolRenderingMode(.hierarchical)
-                    .symbolEffect(.bounce, value: isOn)
-                    .frame(height: 22)
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
-            .foregroundStyle(isOn ? Color.white : Color.primary)
-            .frame(maxWidth: .infinity)
-            .frame(height: 68)
-            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .glassEffect(
-                isOn ? .regular.tint(Color.accentColor.opacity(0.9)).interactive() : .regular.interactive(),
-                in: .rect(cornerRadius: 22)
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityValue(isOn ? "开" : "关")
-        .help("\(isOn ? "隐藏" : "显示")\(title)")
-    }
-}
 
 /// Solid state indicator used inside glass cards (glass on glass would muddy the card).
 struct StateCircle: View {
@@ -891,12 +983,11 @@ extension View {
             .accessibilityHidden(isCollapsed)
     }
 
-    /// A floating Liquid Glass card. Its size animates when content expands, so the glass itself morphs.
+    /// A detail card on the platter, drawn as a translucent module (no glass on glass).
     func card(id: String, in namespace: Namespace.ID) -> some View {
         padding(Metrics.cardPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .containerShape(.rect(cornerRadius: Metrics.cardRadius))
-            .glassEffect(.regular, in: .rect(cornerRadius: Metrics.cardRadius))
-            .glassEffectID(id, in: namespace)
+            .containerShape(.rect(cornerRadius: ModuleGrid.largeRadius))
+            .moduleSurface(RoundedRectangle(cornerRadius: ModuleGrid.largeRadius, style: .continuous))
     }
 }

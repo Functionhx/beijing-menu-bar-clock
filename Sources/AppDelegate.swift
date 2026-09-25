@@ -35,7 +35,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 quit: { [weak self] in self?.quitApp() }
             )
         )
-        controller.onClose = { [weak self] in self?.statusItem.button?.highlight(false) }
+        controller.onClose = { [weak self] in
+            guard let self else { return }
+            self.statusItem.button?.highlight(false)
+            // Closed by us (outside click, Esc, an action): let the menu bar know the session is over.
+            if #available(macOS 27.0, *) { self.statusItem.expandedInterfaceSession?.cancel() }
+        }
         return controller
     }()
     private var lastAnnouncementMinute = ""
@@ -91,12 +96,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         button.target = self
         button.action = #selector(statusItemClicked(_:))
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        // macOS 27: the menu bar drives the panel like Control Center (sliding between menu bar items,
+        // keyboard navigation, the system closing animation). The click action below stays as the fallback.
+        if #available(macOS 27.0, *) {
+            statusItem.expandedInterfaceDelegate = self
+        }
+    }
+
+    private var isSecondaryClick: Bool {
+        let event = NSApp.currentEvent
+        return event?.type == .rightMouseUp || event?.type == .rightMouseDown || event?.modifierFlags.contains(.control) == true
+    }
+
+    /// Guards make this safe to reach from both the click action and the expanded-interface callback,
+    /// whichever arrives first, without opening twice or reopening on the click that just closed it.
+    fileprivate func openPanel() {
+        guard !controlPanel.isOpen, !controlPanel.justClosed, let button = statusItem.button else { return }
+        updateClock()
+        controlPanel.show(below: button)
+        DispatchQueue.main.async { button.highlight(true) }
     }
 
     /// Left click toggles the control panel; right click (or Control-click) shows the classic menu.
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
-        let event = NSApp.currentEvent
-        if event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true {
+        if isSecondaryClick {
             controlPanel.close()
             statusItem.menu = menu
             sender.performClick(nil)
@@ -104,12 +127,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
 
+        // On macOS 27 the menu bar may already be running an expanded-interface session for this click.
+        if #available(macOS 27.0, *), statusItem.expandedInterfaceSession != nil, controlPanel.isOpen {
+            return
+        }
         if controlPanel.isOpen {
             controlPanel.close()
-        } else if !controlPanel.justClosed {
-            updateClock()
-            controlPanel.show(below: sender)
-            DispatchQueue.main.async { sender.highlight(true) }
+        } else {
+            openPanel()
         }
     }
 
@@ -338,5 +363,21 @@ struct BeijingMenuBarClockApp {
         application.delegate = appDelegate
         application.setActivationPolicy(.accessory)
         application.run()
+    }
+}
+
+@available(macOS 27.0, *)
+extension AppDelegate: @MainActor NSStatusItemExpandedInterfaceDelegate {
+    func statusItem(_ statusItem: NSStatusItem, didBegin session: NSStatusItemExpandedInterfaceSession) {
+        // A right click shows the classic menu instead.
+        guard !isSecondaryClick else {
+            session.cancel()
+            return
+        }
+        openPanel()
+    }
+
+    func statusItemDidEndExpandedInterfaceSession(_ statusItem: NSStatusItem, animated: Bool) {
+        controlPanel.close()
     }
 }
