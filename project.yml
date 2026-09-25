@@ -4,21 +4,28 @@ options:
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
+configFiles:
+  Debug: Config/Branch.xcconfig
+  Release: Config/Branch.xcconfig
 targets:
   BeijingClock:
     type: application
     platform: macOS
     sources:
       - path: Sources
+    dependencies:
+      # Fetched by scripts/fetch-sparkle.sh (build.sh and release.sh run it automatically).
+      - framework: Vendor/Sparkle/Sparkle.xcframework
+        embed: true
     settings:
       base:
-        PRODUCT_NAME: Beijing Clock
+        PRODUCT_NAME: $(BMC_PRODUCT_NAME)
         EXECUTABLE_NAME: BeijingClock
-        PRODUCT_BUNDLE_IDENTIFIER: com.chen.dualtime
+        PRODUCT_BUNDLE_IDENTIFIER: $(BMC_BUNDLE_ID)
         INFOPLIST_FILE: Info.plist
         GENERATE_INFOPLIST_FILE: NO
         SWIFT_VERSION: "5.0"
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "-"
-        ENABLE_HARDENED_RUNTIME: NO
+        ENABLE_HARDENED_RUNTIME: YES
         COMBINE_HIDPI_IMAGES: YES

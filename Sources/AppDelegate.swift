@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         configureStatusItem()
         configureMenu()
         settings.startMonitoringApplications()
+        Updater.shared.start()
         NotificationCenter.default.addObserver(
             forName: ClockSettings.changed,
             object: nil,
@@ -91,6 +92,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let refresh = NSMenuItem(title: "刷新", action: #selector(refreshNow), keyEquivalent: "r")
         refresh.target = self
         menu.addItem(refresh)
+
+        let checkForUpdates = NSMenuItem(title: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
+        checkForUpdates.target = self
+        menu.addItem(checkForUpdates)
 
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "退出北京时间", action: #selector(quitApp), keyEquivalent: "q")
@@ -235,6 +240,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    @objc private func checkForUpdates() {
+        controlPanel.close()
+        NSApp.activate(ignoringOtherApps: true)
+        Updater.shared.checkForUpdates(nil)
     }
 
     @objc private func refreshNow() {
