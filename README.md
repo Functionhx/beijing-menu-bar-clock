@@ -35,6 +35,23 @@
 <tr><td>🔒 <b>隐私</b></td><td>只在检查更新时访问 GitHub，不定位、不收集任何数据，没有 Dock 图标。</td></tr>
 </table>
 
+## 🧰 Ultra 版额外功能
+
+`ultra` 分支是功能最全的版本（应用名 **北京时间 Ultra**，可与其他版本并存）。点一下菜单栏时钟，面板顶部多了 **时钟 / 世界 / 日历 / 闹钟** 四个分区：
+
+<table>
+<tr><td width="160">🌍 <b>世界时钟</b></td><td>自定义城市列表（支持搜索中文城市名），显示当地时间、昨天/明天、与主时钟的时差和昼夜；本机时区自动列出。</td></tr>
+<tr><td>🔁 <b>时差换算</b></td><td>拖动 24 小时滑块，各城市时间同步换算；一键复制“北京 15:00 = 纽约 03:00”。</td></tr>
+<tr><td>🏮 <b>农历 / 节气</b></td><td>迷你月历带农历日期和二十四节气（离线计算），显示干支生肖与下一个节气。</td></tr>
+<tr><td>💼 <b>国内作息</b></td><td>一眼看出国内现在是上班、午休、下班还是深夜，以及多久后变化；上下班时间可自定义。</td></tr>
+<tr><td>⏰ <b>跨时区闹钟</b></td><td>按任意时区设闹钟（如按北京时间提醒开会），可重复、可朗读标签；睡眠错过会通知。</td></tr>
+<tr><td>🌙 <b>报时勿扰</b></td><td>设定勿扰时段，夜里不报时。</td></tr>
+<tr><td>⌨️ <b>全局快捷键</b></td><td>默认 ⌥⌘B 随时呼出面板，可自定义，不需要辅助功能权限。</td></tr>
+<tr><td>🚀 <b>开机启动</b></td><td>改用系统「登录项」（SMAppService），面板里一键开关。</td></tr>
+</table>
+
+法定节假日和调休没有内置（每年由国务院公布）；节气时刻与天文台公布值相差约十分钟以内。
+
 ## 🖼 设置界面
 
 <p align="center">
@@ -51,11 +68,11 @@ cd beijing-menu-bar-clock
 ./install.sh
 ```
 
-安装脚本会编译 App、放到 `~/Applications`，并设置为开机自动启动。
+安装脚本会编译 App、放到 `~/Applications` 并打开它；首次从这里启动时，App 会把自己加入 **系统设置 → 通用 → 登录项**，之后可在面板的「开机启动」开关里关闭。
 
 如果菜单栏里没出现时钟，打开 **系统设置 → 菜单栏 → 允许在菜单栏中显示**，打开 **北京时间**。
 
-只想编译不安装：运行 `./build.sh`，App 会生成在 `build/Beijing Clock.app`。
+只想编译不安装：运行 `./build.sh`，App 会生成在 `build/Beijing Clock Ultra.app`。纯逻辑的测试（时差、夏令时、农历、节气、闹钟）：`./scripts/test-logic.sh`。
 
 ## 📦 发布 / 签名 / 自动更新
 
@@ -130,6 +147,21 @@ App 不使用定位；唯一的网络访问是每天一次向 GitHub 检查更�
 - **Private** — network is used only for update checks; no location, no Dock icon.
 - **Auto-update** — Sparkle with EdDSA-signed updates.
 
+### Ultra edition
+
+The `ultra` branch (app name **北京时间 Ultra**, installs side by side with the other editions) adds four panel sections — Clock / World / Calendar / Alarms:
+
+- **World clock** — your own city list with local time, yesterday/tomorrow, difference to the main clock and day/night; the Mac's own zone is listed automatically.
+- **Time converter** — drag a 24-hour slider and every city follows; copy a line like "北京 15:00 = 纽约 03:00".
+- **Lunar calendar & solar terms** — month view with Chinese lunar dates and the 24 solar terms, computed offline.
+- **China work status** — whether people in China are working, at lunch, off work or asleep, and when that changes; hours are configurable.
+- **Alarms in any time zone** — repeating or one-shot, optional spoken label; alarms missed during sleep are reported.
+- **Quiet hours** for the spoken announcement.
+- **Global hotkey** (default ⌥⌘B) via Carbon `RegisterEventHotKey` — no Accessibility permission.
+- **Launch at login** through `SMAppService` instead of a LaunchAgent.
+
+Statutory holidays are not built in. Solar-term instants are within about ten minutes of published values.
+
 ### Install
 
 Requires macOS 14+, Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`). The first build downloads the Sparkle update framework.
@@ -140,9 +172,9 @@ cd beijing-menu-bar-clock
 ./install.sh
 ```
 
-The installer builds the app, copies it to `~/Applications`, and adds a per-user LaunchAgent so it starts at login. If the clock doesn't appear, enable it under **System Settings → Menu Bar → Allow in the Menu Bar → Beijing Time**.
+The installer builds the app, copies it to `~/Applications` and opens it; on its first launch from there the app adds itself to **System Settings → General → Login Items** (toggle it in the panel). If the clock doesn't appear, enable it under **System Settings → Menu Bar → Allow in the Menu Bar → Beijing Time**.
 
-To build without installing, run `./build.sh`; the app is created at `build/Beijing Clock.app`.
+To build without installing, run `./build.sh`; the app is created at `build/Beijing Clock Ultra.app`. Logic tests (time differences, DST, lunar dates, solar terms, alarms): `./scripts/test-logic.sh`.
 
 ### Releases, signing and auto-update
 
