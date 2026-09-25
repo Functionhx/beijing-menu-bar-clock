@@ -2,7 +2,7 @@ name: BeijingClock
 options:
   bundleIdPrefix: com.chen
   deploymentTarget:
-    macOS: "14.0"
+    macOS: "26.0"
   createIntermediateGroups: true
 configFiles:
   Debug: Config/Branch.xcconfig

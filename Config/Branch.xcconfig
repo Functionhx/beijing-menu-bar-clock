@@ -2,10 +2,10 @@
 // only this file to get its own app name, bundle id, update feed, release tags and version.
 // Note: "//" starts a comment in xcconfig, so URLs are written as https:/$()/...
 
-BMC_BRANCH = control-panel
-BMC_PRODUCT_NAME = Beijing Clock
-BMC_BUNDLE_ID = com.chen.dualtime
-BMC_DISPLAY_NAME = 北京时间
+BMC_BRANCH = liquid
+BMC_PRODUCT_NAME = Beijing Clock Liquid
+BMC_BUNDLE_ID = com.chen.dualtime.liquid
+BMC_DISPLAY_NAME = 北京时间 Liquid
 BMC_FEED_URL = https:/$()/raw.githubusercontent.com/Functionhx/beijing-menu-bar-clock/$(BMC_BRANCH)/appcast.xml
 
 // Sparkle EdDSA public key. The private key lives only in the release Mac's login keychain
