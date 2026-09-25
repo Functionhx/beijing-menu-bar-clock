@@ -323,10 +323,15 @@ struct TimeZoneSearchView: View {
                                 }
                                 ForEach(section.entries) { entry in
                                     let index = entries.firstIndex(of: entry) ?? 0
-                                    row(entry, isHighlighted: index == highlighted)
-                                        .id(entry.id)
-                                        .onTapGesture { onSelect(entry.identifier) }
-                                        .onHover { if $0 { highlighted = index } }
+                                    Button {
+                                        onSelect(entry.identifier)
+                                    } label: {
+                                        row(entry, isHighlighted: index == highlighted)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .id(entry.id)
+                                    .onHover { if $0 { highlighted = index } }
                                 }
                             }
                         }
