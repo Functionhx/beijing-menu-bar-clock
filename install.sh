@@ -2,13 +2,15 @@
 set -euo pipefail
 
 ROOT_DIR=${0:A:h}
-APP_SOURCE="$ROOT_DIR/build/Beijing Clock.app"
-APP_DEST="$HOME/Applications/Beijing Clock.app"
-AGENT="$HOME/Library/LaunchAgents/com.chen.dualtime.plist"
+source "$ROOT_DIR/scripts/common.sh"
+APP_SOURCE="$ROOT_DIR/build/$APP_NAME.app"
+APP_DEST="$HOME/Applications/$APP_NAME.app"
+AGENT="$HOME/Library/LaunchAgents/$BUNDLE_ID.plist"
 UID_VALUE=$(id -u)
 
 "$ROOT_DIR/build.sh"
 mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents"
+rm -rf "$APP_DEST"
 ditto "$APP_SOURCE" "$APP_DEST"
 
 cat > "$AGENT" <<PLIST
@@ -16,7 +18,7 @@ cat > "$AGENT" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.chen.dualtime</string>
+  <key>Label</key><string>$BUNDLE_ID</string>
   <key>ProgramArguments</key>
   <array><string>$APP_DEST/Contents/MacOS/BeijingClock</string></array>
   <key>RunAtLoad</key><true/>
@@ -25,7 +27,7 @@ cat > "$AGENT" <<PLIST
 </plist>
 PLIST
 
-launchctl bootout "gui/$UID_VALUE/com.chen.dualtime" 2>/dev/null || true
+launchctl bootout "gui/$UID_VALUE/$BUNDLE_ID" 2>/dev/null || true
 for attempt in 1 2 3; do
   if launchctl bootstrap "gui/$UID_VALUE" "$AGENT"; then
     break
