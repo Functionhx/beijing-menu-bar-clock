@@ -88,7 +88,8 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
             settings: settings,
             actions: actions,
             session: session,
-            initialExpansion: expansion
+            initialExpansion: expansion,
+            isActive: true
         )
         settings.refreshApplicationStatuses()
         hostingView.layoutSubtreeIfNeeded()
@@ -120,6 +121,8 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
             self.outsideClickMonitor = nil
         }
         panel.orderOut(nil)
+        // Drop the SwiftUI content while hidden; the next show() builds a fresh one anyway.
+        hostingView.rootView = ControlPanelView(settings: settings, actions: actions, session: session)
         onClose?()
     }
 
@@ -160,15 +163,21 @@ struct ControlPanelView: View {
     let actions: ControlPanelActions
     var session = 0
     var initialExpansion: Expansion?
+    /// False while the panel is closed: the content is torn down so its per-second clock and layout stop.
+    var isActive = false
 
     var body: some View {
-        ControlPanelContent(
-            settings: settings,
-            actions: actions,
-            expansion: initialExpansion,
-            tab: PanelTab.initial(for: initialExpansion)
-        )
-        .id(session)
+        if isActive {
+            ControlPanelContent(
+                settings: settings,
+                actions: actions,
+                expansion: initialExpansion,
+                tab: PanelTab.initial(for: initialExpansion)
+            )
+            .id(session)
+        } else {
+            Color.clear.frame(width: 1, height: 1)
+        }
     }
 }
 

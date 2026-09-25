@@ -39,6 +39,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return controller
     }()
     private var lastAnnouncementMinute = ""
+    private var formatters: [String: DateFormatter] = [:]
+    private var lastTitle: NSAttributedString?
+    /// Monospaced digits keep the clock from shifting as seconds change, which is also what lets the status
+    /// item keep a fixed width (see updateClock).
+    private let titleFont = NSFont.monospacedDigitSystemFont(ofSize: NSFont.menuBarFont(ofSize: 0).pointSize, weight: .regular)
 
     /// Open/alert panels can't sit on top of the control panel, so close it and bring the app forward first.
     private func runFromPanel(_ body: @escaping (ClockSettings) -> Void) {
@@ -58,8 +63,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.updateClock() }
+            Task { @MainActor in
+                guard let self else { return }
+                self.updateClock()
+                if self.timer?.timeInterval != self.timerInterval { self.startTimer() }
+            }
         }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(clockMayHaveJumped), name: NSWorkspace.didWakeNotification, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(clockMayHaveJumped), name: .NSSystemClockDidChange, object: nil
+        )
         updateClock()
         startTimer()
     }
@@ -123,45 +138,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(quit)
     }
 
+    /// Wakes once a second only when the title shows seconds or blinks; otherwise once a minute, on the minute.
+    /// Every time zone is offset by whole quarter hours, so minute boundaries are the same everywhere.
+    private var timerInterval: TimeInterval {
+        settings.showSeconds || settings.flashSeparators ? 1 : 60
+    }
+
     private func startTimer() {
         timer?.invalidate()
-        // Fire just after each whole second so the 0.2s tolerance never crosses into the next second.
-        let nextSecond = Date(timeIntervalSinceReferenceDate: Date.timeIntervalSinceReferenceDate.rounded(.down) + 1.02)
-        let timer = Timer(fire: nextSecond, interval: 1, repeats: true) { [weak self] _ in
+        let interval = timerInterval
+        // Fire just after each boundary so the tolerance never crosses into the next second or minute.
+        let now = Date.timeIntervalSinceReferenceDate
+        let next = Date(timeIntervalSinceReferenceDate: (now / interval).rounded(.down) * interval + interval + 0.02)
+        let timer = Timer(fire: next, interval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.updateClock() }
         }
-        timer.tolerance = 0.2
+        timer.tolerance = interval == 1 ? 0.2 : 0.5
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
 
+    /// Timers don't advance while the Mac sleeps, and a minute timer could then be up to a minute behind.
+    @objc private func clockMayHaveJumped() {
+        updateClock()
+        startTimer()
+    }
+
+    /// Runs every second, so it does as little as possible: cached formatters, no redraw when the text is
+    /// unchanged, and a fixed status item width. With a variable-length item every new title re-lays out the
+    /// whole menu bar; with a fixed length only this button redraws, and the length changes only when the
+    /// text width does (date rollover or a settings change).
     private func updateClock() {
         let now = Date()
         let timeZone = settings.effectiveTimeZone
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = timeZone
 
         var parts: [String] = []
         if settings.showDate {
-            formatter.dateFormat = "M月d日"
-            parts.append(formatter.string(from: now))
+            parts.append(formatter("M月d日", timeZone).string(from: now))
         }
         if settings.showWeekday {
-            formatter.dateFormat = "EEE"
-            parts.append(formatter.string(from: now))
+            parts.append(formatter("EEE", timeZone).string(from: now))
+        }
+        parts.append(formatter(settings.showSeconds ? "HH:mm:ss" : "HH:mm", timeZone).string(from: now))
+        let text = parts.joined(separator: " ")
+
+        let title = NSMutableAttributedString(string: text, attributes: [.font: titleFont])
+        if settings.flashSeparators && Int(now.timeIntervalSince1970).isMultiple(of: 2) == false {
+            // Hide the colons instead of replacing them, so the width stays the same.
+            let time = (text as NSString).range(of: parts[parts.count - 1], options: .backwards)
+            var search = time
+            while case let colon = (text as NSString).range(of: ":", range: search), colon.location != NSNotFound {
+                title.addAttribute(.foregroundColor, value: NSColor.clear, range: colon)
+                search = NSRange(location: colon.location + 1, length: time.upperBound - colon.location - 1)
+            }
         }
 
-        formatter.dateFormat = settings.showSeconds ? "HH:mm:ss" : "HH:mm"
-        var time = formatter.string(from: now)
-        let second = Calendar(identifier: .gregorian).dateComponents(in: timeZone, from: now).second ?? 0
-        if settings.flashSeparators && second.isMultiple(of: 2) == false {
-            time = time.replacingOccurrences(of: ":", with: " ")
+        if title != lastTitle, let button = statusItem.button {
+            lastTitle = title
+            button.attributedTitle = title
+            let length = ceil(title.size().width) + 10
+            if abs(statusItem.length - length) > 0.5 {
+                statusItem.length = length
+            }
         }
-        parts.append(time)
-        statusItem.button?.title = parts.joined(separator: " ")
 
         announceIfNeeded(now)
+    }
+
+    private func formatter(_ pattern: String, _ timeZone: TimeZone) -> DateFormatter {
+        let key = "\(timeZone.identifier)|\(pattern)"
+        if let cached = formatters[key] { return cached }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = pattern
+        formatters[key] = formatter
+        return formatter
     }
 
     private func announceIfNeeded(_ date: Date) {
