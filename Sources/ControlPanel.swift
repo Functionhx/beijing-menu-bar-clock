@@ -171,7 +171,7 @@ struct ControlPanelView: View {
     }
 }
 
-/// Top-level sections of the panel, shown one at a time under the clock like the ultra edition.
+/// Top-level sections of the panel, shown one at a time under the clock.
 enum PanelTab: String, CaseIterable, Identifiable {
     case calendar, clock, applications
 

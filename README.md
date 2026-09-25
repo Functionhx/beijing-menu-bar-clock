@@ -59,9 +59,9 @@ cd beijing-menu-bar-clock
 
 ## 📦 发布 / 签名 / 自动更新
 
-自动更新基于 [Sparkle](https://sparkle-project.org)：App 每天读取一次本分支的 `appcast.xml`，下载的更新包必须通过 EdDSA 签名校验才会安装。
+自动更新基于 [Sparkle](https://sparkle-project.org)：App 每天读取一次 `main` 分支上的 `appcast.xml`，下载的更新包必须通过 EdDSA 签名校验才会安装。
 
-每个分支（`control-panel` / `liquid` / `ultra` / `nano`）的身份只在 **`Config/Branch.xcconfig`** 一个文件里配置：`BMC_BRANCH`（决定更新源和发布标签）、`BMC_PRODUCT_NAME`、`BMC_BUNDLE_ID`、`BMC_DISPLAY_NAME`，以及版本号 `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION`（每次发布都要递增）。
+App 的身份只在 **`Config/Branch.xcconfig`** 一个文件里配置：`BMC_BRANCH`（更新源所在分支）、`BMC_PRODUCT_NAME`、`BMC_BUNDLE_ID`、`BMC_DISPLAY_NAME`，以及版本号 `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION`（每次发布都要递增）。
 
 打包发布：
 
@@ -146,9 +146,9 @@ To build without installing, run `./build.sh`; the app is created at `build/Beij
 
 ### Releases, signing and auto-update
 
-Updates are delivered with [Sparkle](https://sparkle-project.org): the app reads its branch's `appcast.xml` once a day and only installs archives whose EdDSA signature matches the public key baked into the app.
+Updates are delivered with [Sparkle](https://sparkle-project.org): the app reads `appcast.xml` on `main` once a day and only installs archives whose EdDSA signature matches the public key baked into the app.
 
-Each branch configures its identity in **`Config/Branch.xcconfig`** only: `BMC_BRANCH` (update feed and release tags), `BMC_PRODUCT_NAME`, `BMC_BUNDLE_ID`, `BMC_DISPLAY_NAME`, plus `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` (bump both for every release).
+The app identity lives in **`Config/Branch.xcconfig`** only: `BMC_BRANCH` (branch that hosts the update feed), `BMC_PRODUCT_NAME`, `BMC_BUNDLE_ID`, `BMC_DISPLAY_NAME`, plus `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` (bump both for every release).
 
 Run `./scripts/release.sh` to archive, sign, optionally notarize, zip, EdDSA-sign and prepend an item to `appcast.xml`. It never uploads or pushes; it prints the `gh release create` and `git push` commands to run yourself.
 

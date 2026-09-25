@@ -18,7 +18,7 @@ final class LoginItem: ObservableObject {
 
     var subtitle: String { isEnabled ? "开" : "关" }
 
-    private var label: String { Bundle.main.bundleIdentifier ?? "com.chen.dualtime.liquid" }
+    private var label: String { Bundle.main.bundleIdentifier ?? "com.chen.dualtime" }
 
     private var agentURL: URL {
         FileManager.default.homeDirectoryForCurrentUser

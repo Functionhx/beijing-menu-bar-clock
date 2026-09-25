@@ -1,11 +1,10 @@
-// Per-branch identity. Each variant branch (control-panel, liquid, ultra, nano) edits
-// only this file to get its own app name, bundle id, update feed, release tags and version.
+// App identity: name, bundle id, update feed branch and version all live in this one file.
 // Note: "//" starts a comment in xcconfig, so URLs are written as https:/$()/...
 
-BMC_BRANCH = liquid
-BMC_PRODUCT_NAME = Beijing Clock Liquid
-BMC_BUNDLE_ID = com.chen.dualtime.liquid
-BMC_DISPLAY_NAME = 北京时间 Liquid
+BMC_BRANCH = main
+BMC_PRODUCT_NAME = Beijing Clock
+BMC_BUNDLE_ID = com.chen.dualtime
+BMC_DISPLAY_NAME = 北京时间
 BMC_FEED_URL = https:/$()/raw.githubusercontent.com/Functionhx/beijing-menu-bar-clock/$(BMC_BRANCH)/appcast.xml
 
 // Sparkle EdDSA public key. The private key lives only in the release Mac's login keychain
@@ -14,5 +13,5 @@ BMC_SPARKLE_PUBLIC_KEY = nSGTfka6F10skNU4QYUPAKJLB4mjz73M52q9qKptPzA=
 
 // Bump both for every release: MARKETING_VERSION is shown to users,
 // CURRENT_PROJECT_VERSION must strictly increase (Sparkle compares it).
-MARKETING_VERSION = 1.4.0
-CURRENT_PROJECT_VERSION = 5
+MARKETING_VERSION = 2.0.0
+CURRENT_PROJECT_VERSION = 6

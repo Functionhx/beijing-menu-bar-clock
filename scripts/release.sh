@@ -18,11 +18,11 @@ SPARKLE_ACCOUNT=${SPARKLE_ACCOUNT:-beijing-menu-bar-clock}
 SPARKLE_BIN="$ROOT_DIR/Vendor/Sparkle/bin"
 REPO_URL="https://github.com/Functionhx/beijing-menu-bar-clock"
 
-TAG="$BRANCH_NAME-v$VERSION"
+TAG="v$VERSION"
 OUT_DIR="$ROOT_DIR/build/release"
 ARCHIVE="$OUT_DIR/BeijingClock.xcarchive"
 APP="$OUT_DIR/$APP_NAME.app"
-ZIP_NAME="BeijingClock-$BRANCH_NAME-$VERSION.zip"
+ZIP_NAME="BeijingClock-$VERSION.zip"
 ZIP="$OUT_DIR/$ZIP_NAME"
 
 step() { print -P "%F{cyan}==>%f $1"; }
@@ -105,7 +105,7 @@ cat <<MSG
 
 To publish (upload the zip first, then push the appcast so clients never see a missing file):
 
-  gh release create "$TAG" "$ZIP" --target "$BRANCH_NAME" --title "$APP_NAME $VERSION ($BRANCH_NAME)" --notes "…"
+  gh release create "$TAG" "$ZIP" --target "$BRANCH_NAME" --title "$APP_NAME $VERSION" --notes "…"
   git add appcast.xml Config/Branch.xcconfig && git commit -m "Release $TAG"
   git push origin "$BRANCH_NAME"
 
