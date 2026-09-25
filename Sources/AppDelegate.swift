@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self?.runFromPanel { $0.chooseCustomSound() }
                 },
                 checkForUpdates: { [weak self] in self?.checkForUpdates() },
+                openImportantDates: { [weak self] in self?.openSettings(page: .importantDates) },
                 quit: { [weak self] in self?.quitApp() }
             )
         )
@@ -51,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         configureMenu()
         settings.startMonitoringApplications()
         Updater.shared.start()
+        ImportantDateStore.shared.start()
         NotificationCenter.default.addObserver(
             forName: ClockSettings.changed,
             object: nil,
@@ -244,6 +246,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func showSettings() {
+        openSettings(page: nil)
+    }
+
+    private func openSettings(page: SettingsPage?) {
         controlPanel.close()
         if settingsWindow == nil {
             settingsWindow = SettingsWindowController(
@@ -251,7 +257,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 onCheckForUpdates: { [weak self] in self?.checkForUpdates() }
             )
         }
-        settingsWindow?.show()
+        settingsWindow?.show(page: page)
     }
 
     @objc private func checkForUpdates() {

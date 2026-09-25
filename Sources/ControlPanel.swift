@@ -8,6 +8,7 @@ struct ControlPanelActions {
     let addApplications: () -> Void
     let chooseCustomSound: () -> Void
     let checkForUpdates: () -> Void
+    let openImportantDates: () -> Void
     let quit: () -> Void
 }
 
@@ -221,6 +222,7 @@ private struct ControlPanelContent: View {
     let actions: ControlPanelActions
     @State var expansion: ControlPanelView.Expansion?
     @State var tab: PanelTab
+    @State private var importantDraft: ImportantDate?
     @State private var appeared = false
     @Namespace private var glassNamespace
     @Namespace private var tabNamespace
@@ -271,7 +273,10 @@ private struct ControlPanelContent: View {
         VStack(spacing: Metrics.spacing) {
             switch item {
             case .calendar:
+                // While editing a date the month grid folds away, so the panel doesn't outgrow the screen.
                 CalendarCard(settings: settings, namespace: glassNamespace)
+                    .collapsed(importantDraft != nil)
+                ImportantDatesCard(draft: $importantDraft, namespace: glassNamespace, openAll: actions.openImportantDates)
             case .clock:
                 displayToggles
                 launchAtLoginCard
@@ -813,7 +818,7 @@ struct StateCircle: View {
 }
 
 /// Capsule segmented control whose selection pill slides between segments with a spring.
-private struct LiquidSegmentedControl: View {
+struct LiquidSegmentedControl: View {
     let choices: [String]
     @Binding var selection: String
     @Namespace private var namespace

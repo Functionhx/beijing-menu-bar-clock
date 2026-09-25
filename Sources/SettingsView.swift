@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Pages of the 详细设置 window.
 enum SettingsPage: String, CaseIterable, Identifiable {
-    case display, timeZone, applications, announcement, about
+    case display, timeZone, applications, announcement, importantDates, about
 
     var id: String { rawValue }
 
@@ -13,6 +13,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .timeZone: return "时区"
         case .applications: return "应用时区白名单"
         case .announcement: return "语音报时"
+        case .importantDates: return "重要日期"
         case .about: return "关于与更新"
         }
     }
@@ -23,6 +24,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .timeZone: return "globe.asia.australia.fill"
         case .applications: return "app.badge.clock.fill"
         case .announcement: return "speaker.wave.2.fill"
+        case .importantDates: return "star.circle.fill"
         case .about: return "arrow.trianglehead.2.clockwise"
         }
     }
@@ -33,6 +35,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .timeZone: return .teal
         case .applications: return .indigo
         case .announcement: return .orange
+        case .importantDates: return .pink
         case .about: return .gray
         }
     }
@@ -43,6 +46,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .timeZone: return "菜单栏时钟使用的时区，不影响系统时区。"
         case .applications: return "让指定应用以独立时区启动，例如微信按北京时间显示。"
         case .announcement: return "按固定间隔用中文播报当前时间。"
+        case .importantDates: return "生日、考试、报名等日期，到期前用系统通知提醒你。"
         case .about: return "版本信息、开机启动与自动更新。"
         }
     }
@@ -179,6 +183,7 @@ struct SettingsView: View {
         case .timeZone: timeZonePage
         case .applications: applicationsPage
         case .announcement: announcementPage
+        case .importantDates: ImportantDatesPage()
         case .about: aboutPage
         }
     }
@@ -477,6 +482,84 @@ struct SettingsView: View {
         case .notApplied, .mismatched: return .orange
         case .notRunning, .unavailable: return .secondary
         }
+    }
+}
+
+// MARK: - Important dates
+
+/// 详细设置 › 重要日期: every saved date, edited in a sheet.
+private struct ImportantDatesPage: View {
+    @ObservedObject private var store = ImportantDateStore.shared
+    @State private var editing: ImportantDate?
+
+    var body: some View {
+        TimelineView(.everyMinute) { _ in
+            let today = store.today
+            let entries = store.upcoming(from: today)
+            VStack(alignment: .leading, spacing: 20) {
+                GlassSection(entries.isEmpty ? "全部" : "全部 \(entries.count) 项") {
+                    if entries.isEmpty {
+                        Text("还没有重要日期。可以添加生日、考试、报名截止等，到期前会提醒你。")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(entries) { entry in
+                            ImportantDateRow(entry: entry, today: today) { editing = entry.item }
+                                .contextMenu {
+                                    Button("编辑…") { editing = entry.item }
+                                    Button("删除", role: .destructive) { store.remove(id: entry.item.id) }
+                                }
+                            if entry.id != entries.last?.id {
+                                Divider()
+                            }
+                        }
+                    }
+                } trailing: {
+                    Button {
+                        editing = ImportantDate(start: today)
+                    } label: {
+                        Label("添加", systemImage: "plus")
+                    }
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+                }
+                Text("提醒通过系统通知发送，日期和提醒时间按菜单栏时钟的时区计算。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 4)
+            }
+        }
+        .sheet(item: $editing) { item in
+            ImportantDateEditorSheet(
+                draft: item,
+                isNew: !store.items.contains { $0.id == item.id },
+                close: { editing = nil }
+            )
+        }
+    }
+}
+
+private struct ImportantDateEditorSheet: View {
+    @State var draft: ImportantDate
+    let isNew: Bool
+    let close: () -> Void
+    @ObservedObject private var store = ImportantDateStore.shared
+
+    var body: some View {
+        ImportantDateEditor(
+            draft: $draft,
+            isNew: isNew,
+            onSave: { item in
+                store.save(item)
+                close()
+            },
+            onCancel: close,
+            onDelete: { id in
+                store.remove(id: id)
+                close()
+            }
+        )
+        .padding(20)
+        .frame(width: 380)
     }
 }
 

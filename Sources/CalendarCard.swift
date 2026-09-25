@@ -1,8 +1,10 @@
 import SwiftUI
 
-/// "日历" tab: a Liquid Glass month card with lunar days and solar terms, plus details for the chosen day.
+/// "日历" tab: a Liquid Glass month card with lunar days, solar terms and important dates, plus details for
+/// the chosen day.
 struct CalendarCard: View {
     @ObservedObject var settings: ClockSettings
+    @ObservedObject var store = ImportantDateStore.shared
     let namespace: Namespace.ID
 
     @State private var monthOffset = 0
@@ -16,10 +18,11 @@ struct CalendarCard: View {
             let today = calendar.dateComponents([.year, .month, .day], from: context.date)
             let month = displayedMonth(today: today, calendar: calendar)
             let chosen = selected ?? today
+            let marks = importantDates(in: month, calendar: calendar)
 
             VStack(spacing: 10) {
                 monthHeader(month: month)
-                grid(month: month, today: today, chosen: chosen, calendar: calendar)
+                grid(month: month, today: today, chosen: chosen, calendar: calendar, marks: marks)
                 Divider()
                 details(for: chosen, today: today, calendar: calendar)
             }
@@ -73,7 +76,19 @@ struct CalendarCard: View {
 
     // MARK: Grid
 
-    private func grid(month: (year: Int, month: Int), today: DateComponents, chosen: DateComponents, calendar: Calendar) -> some View {
+    private func importantDates(in month: (year: Int, month: Int), calendar: Calendar) -> [DayStamp: [ImportantDateStore.Entry]] {
+        let first = DayStamp(year: month.year, month: month.month, day: 1)
+        let length = monthCells(year: month.year, month: month.month, calendar: calendar).compactMap { $0 }.count
+        return store.entriesByDay(from: first, through: DayStamp(year: month.year, month: month.month, day: length))
+    }
+
+    private func grid(
+        month: (year: Int, month: Int),
+        today: DateComponents,
+        chosen: DateComponents,
+        calendar: Calendar,
+        marks: [DayStamp: [ImportantDateStore.Entry]]
+    ) -> some View {
         let cells = monthCells(year: month.year, month: month.month, calendar: calendar)
         return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 7), spacing: 3) {
             ForEach(weekdayHeaders, id: \.self) { header in
@@ -90,7 +105,8 @@ struct CalendarCard: View {
                         day: day,
                         isWeekend: index % 7 >= 5,
                         isToday: today.year == month.year && today.month == month.month && today.day == day,
-                        isSelected: chosen.year == month.year && chosen.month == month.month && chosen.day == day
+                        isSelected: chosen.year == month.year && chosen.month == month.month && chosen.day == day,
+                        entries: marks[DayStamp(year: month.year, month: month.month, day: day)] ?? []
                     )
                 } else {
                     Color.clear.frame(height: 38)
@@ -99,9 +115,20 @@ struct CalendarCard: View {
         }
     }
 
-    private func dayCell(year: Int, month: Int, day: Int, isWeekend: Bool, isToday: Bool, isSelected: Bool) -> some View {
+    private func dayCell(
+        year: Int,
+        month: Int,
+        day: Int,
+        isWeekend: Bool,
+        isToday: Bool,
+        isSelected: Bool,
+        entries: [ImportantDateStore.Entry]
+    ) -> some View {
         let term = SolarTerms.termName(year: year, month: month, day: day)
         let lunar = LunarCalendar.lunarDate(year: year, month: month, day: day)
+        // Periods tint the whole run of days; single dates get a dot in their kind's color.
+        let period = entries.first { $0.occurrence.start != $0.occurrence.end }
+        let dots = entries.filter { $0.occurrence.start == $0.occurrence.end || $0.occurrence.start.day == day }
         return Button {
             withAnimation(Metrics.spring) { selected = DateComponents(year: year, month: month, day: day) }
         } label: {
@@ -117,6 +144,16 @@ struct CalendarCard: View {
             }
             .frame(maxWidth: .infinity)
             .frame(height: 38)
+            .overlay(alignment: .bottom) {
+                HStack(spacing: 2) {
+                    ForEach(dots.prefix(3)) { entry in
+                        Circle()
+                            .fill(isToday ? Color.white : entry.item.kind.tint)
+                            .frame(width: 4, height: 4)
+                    }
+                }
+                .offset(y: -1)
+            }
             .background {
                 if isToday {
                     RoundedRectangle(cornerRadius: 11, style: .continuous)
@@ -126,6 +163,9 @@ struct CalendarCard: View {
                     RoundedRectangle(cornerRadius: 11, style: .continuous)
                         .strokeBorder(Color.accentColor.opacity(0.7), lineWidth: 1.5)
                         .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Color.accentColor.opacity(0.1)))
+                } else if let period {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(period.item.kind.tint.opacity(0.16))
                 }
             }
             .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
@@ -145,6 +185,8 @@ struct CalendarCard: View {
         let distance = calendar.dateComponents([.day], from: todayDate, to: date).day ?? 0
         let term = SolarTerms.termName(year: year, month: month, day: dayOfMonth)
         let next = nextTerm(after: date)
+        let stamp = DayStamp(year: year, month: month, day: dayOfMonth)
+        let events = store.entriesByDay(from: stamp, through: stamp)[stamp] ?? []
 
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -174,6 +216,18 @@ struct CalendarCard: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(.secondary)
                     .symbolRenderingMode(.hierarchical)
+            }
+            ForEach(events) { entry in
+                HStack(spacing: 5) {
+                    Image(systemName: entry.item.kind.symbol)
+                        .foregroundStyle(entry.item.kind.tint)
+                    Text(entry.item.title)
+                        .fontWeight(.semibold)
+                    Text(entry.item.dateLabel(for: entry.occurrence))
+                        .foregroundStyle(.secondary)
+                }
+                .font(.system(size: 11.5))
+                .lineLimit(1)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
