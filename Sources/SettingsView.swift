@@ -98,9 +98,9 @@ struct SettingsView: View {
                             Text("时间间隔")
                             Spacer()
                             Picker("", selection: $settings.announceInterval) {
-                                Text("每小时").tag("每小时")
-                                Text("每半小时").tag("每半小时")
-                                Text("每刻钟").tag("每刻钟")
+                                ForEach(settings.announceIntervalChoices, id: \.self) { interval in
+                                    Text(interval).tag(interval)
+                                }
                             }
                             .labelsHidden()
                             .frame(width: 130)

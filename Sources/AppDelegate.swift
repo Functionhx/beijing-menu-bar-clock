@@ -11,6 +11,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let speech = AVSpeechSynthesizer()
     private var timer: Timer?
     private var settingsWindow: NSWindow?
+    private lazy var controlPanel: ControlPanelController = {
+        let controller = ControlPanelController(
+            settings: settings,
+            actions: ControlPanelActions(
+                openSettings: { [weak self] in self?.showSettings() },
+                launch: { [weak self] app in
+                    self?.controlPanel.close()
+                    self?.settings.launch(app)
+                },
+                quit: { [weak self] in self?.quitApp() }
+            )
+        )
+        controller.onClose = { [weak self] in self?.statusItem.button?.highlight(false) }
+        return controller
+    }()
     private var lastAnnouncementMinute = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -37,7 +52,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let button = statusItem.button else { return }
         button.toolTip = "菜单栏时钟"
         button.imagePosition = .noImage
-        statusItem.menu = menu
+        button.target = self
+        button.action = #selector(statusItemClicked(_:))
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+    }
+
+    /// Left click toggles the control panel; right click (or Control-click) shows the classic menu.
+    @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
+        let event = NSApp.currentEvent
+        if event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true {
+            controlPanel.close()
+            statusItem.menu = menu
+            sender.performClick(nil)
+            statusItem.menu = nil
+            return
+        }
+
+        if controlPanel.isOpen {
+            controlPanel.close()
+        } else if !controlPanel.justClosed {
+            updateClock()
+            controlPanel.show(below: sender)
+            DispatchQueue.main.async { sender.highlight(true) }
+        }
     }
 
     private func configureMenu() {
@@ -75,7 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updateClock() {
         let now = Date()
-        let timeZone = selectedTimeZone
+        let timeZone = settings.effectiveTimeZone
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.timeZone = timeZone
@@ -104,7 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func announceIfNeeded(_ date: Date) {
         guard settings.announceTime else { return }
-        let timeZone = selectedTimeZone
+        let timeZone = settings.effectiveTimeZone
         let calendar = Calendar(identifier: .gregorian)
         let values = calendar.dateComponents(in: timeZone, from: date)
         guard values.second == 0, let minute = values.minute, let hour = values.hour else { return }
@@ -136,13 +173,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "系统声音": NSSound(named: "Glass")?.play()
         default: NSSound(named: settings.soundName)?.play()
         }
-    }
-
-    private var selectedTimeZone: TimeZone {
-        if settings.useSystemTimeZone {
-            return .autoupdatingCurrent
-        }
-        return TimeZone(identifier: settings.timeZoneIdentifier) ?? TimeZone(identifier: "Asia/Shanghai")!
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -191,6 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func showSettings() {
+        controlPanel.close()
         if settingsWindow == nil {
             let view = SettingsView(settings: settings) { [weak self] in
                 self?.settingsWindow?.close()

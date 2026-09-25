@@ -21,7 +21,12 @@ final class ClockSettings: ObservableObject {
     }
 
     let soundChoices = ["系统声音", "Glass", "Ping", "Pop", "Tink", "无", "自定义…"]
+    let announceIntervalChoices = ["每小时", "每半小时", "每刻钟"]
     let timeZoneChoices = TimeZone.knownTimeZoneIdentifiers.sorted()
+    let quickTimeZoneChoices = [
+        "Asia/Shanghai", "Asia/Hong_Kong", "Asia/Taipei", "Asia/Tokyo", "Asia/Singapore",
+        "Europe/London", "Europe/Paris", "America/New_York", "America/Los_Angeles"
+    ]
 
     @Published var showDate: Bool { didSet { save(Key.showDate, showDate) } }
     @Published var showWeekday: Bool { didSet { save(Key.showWeekday, showWeekday) } }
@@ -77,6 +82,17 @@ final class ClockSettings: ObservableObject {
             managedTimeZoneApps = Self.defaultManagedApps()
             saveManagedApps()
         }
+    }
+
+    var effectiveTimeZone: TimeZone {
+        if useSystemTimeZone {
+            return .autoupdatingCurrent
+        }
+        return TimeZone(identifier: timeZoneIdentifier) ?? TimeZone(identifier: "Asia/Shanghai")!
+    }
+
+    func shortTimeZoneName(_ timeZone: TimeZone) -> String {
+        timeZone.localizedName(for: .generic, locale: Locale(identifier: "zh_CN")) ?? timeZone.identifier
     }
 
     private func save(_ key: String, _ value: Any) {
