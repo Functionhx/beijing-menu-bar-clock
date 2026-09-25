@@ -7,6 +7,7 @@ struct ControlPanelActions {
     let reveal: (ManagedTimeZoneApp) -> Void
     let addApplications: () -> Void
     let chooseCustomSound: () -> Void
+    let checkForUpdates: () -> Void
     let quit: () -> Void
 }
 
@@ -92,6 +93,8 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
 
         panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
         panel.makeKeyAndOrderFront(nil)
+        // Don't let AppKit auto-focus the first text/date field; search fields focus themselves when opened.
+        panel.makeFirstResponder(nil)
         panel.invalidateShadow()
         isOpen = true
 
@@ -174,6 +177,10 @@ struct ControlPanelView: View {
     enum Expansion: Equatable {
         case clockTimeZone(query: String = "")
         case applicationTimeZone(UUID)
+        /// World tab with the converter set to this minute of the day.
+        case converter(minuteOfDay: Int)
+        /// Alarms tab with the editor open for a new alarm.
+        case newAlarm
     }
 
     let settings: ClockSettings
@@ -189,6 +196,9 @@ struct ControlPanelView: View {
 
 private struct ControlPanelContent: View {
     @ObservedObject var settings: ClockSettings
+    @ObservedObject var ultra = UltraSettings.shared
+    @ObservedObject var loginItem = LoginItem.shared
+    @ObservedObject var hotKey = GlobalHotKey.shared
     let actions: ControlPanelActions
     @State var expansion: ControlPanelView.Expansion?
 
@@ -197,21 +207,66 @@ private struct ControlPanelContent: View {
     var body: some View {
         VStack(spacing: 10) {
             header
+            PanelTabBar(selection: $ultra.panelTab)
 
+            switch ultra.panelTab {
+            case .clock:
+                clockSection
+            case .world:
+                WorldClockPanelSection(settings: settings, ultra: ultra, initialScrubMinute: initialConverterMinute)
+            case .calendar:
+                CalendarPanelSection(settings: settings, ultra: ultra)
+            case .alarms:
+                AlarmsPanelSection(settings: settings, ultra: ultra, startsEditing: expansion == .newAlarm)
+            }
+
+            footer
+        }
+        .padding(12)
+        .frame(width: 320)
+        .onAppear {
+            switch expansion {
+            case .converter: ultra.panelTab = .world
+            case .newAlarm: ultra.panelTab = .alarms
+            case .clockTimeZone, .applicationTimeZone: ultra.panelTab = .clock
+            case nil: break
+            }
+            loginItem.refresh()
+        }
+    }
+
+    private var initialConverterMinute: Int? {
+        if case let .converter(minute) = expansion { return minute }
+        return nil
+    }
+
+    private var clockSection: some View {
+        VStack(spacing: 10) {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
                 ToggleTile(title: "日期", symbol: "calendar", isOn: $settings.showDate)
                 ToggleTile(title: "星期", symbol: "calendar.badge.clock", isOn: $settings.showWeekday)
                 ToggleTile(title: "秒钟", symbol: "stopwatch", isOn: $settings.showSeconds)
                 ToggleTile(title: "闪动分隔符", symbol: "sparkles", isOn: $settings.flashSeparators)
+                ToggleTile(
+                    title: "开机启动",
+                    symbol: "power",
+                    isOn: Binding(get: { loginItem.isEnabled }, set: { loginItem.setEnabled($0) }),
+                    subtitle: loginItem.subtitle
+                )
+                .help(loginItem.lastError ?? "登录 Mac 时自动打开")
+                ToggleTile(
+                    title: "快捷键",
+                    symbol: "command",
+                    isOn: $ultra.hotKey.isEnabled,
+                    subtitle: ultra.hotKey.isEnabled ? (hotKey.registrationFailed ? "被占用" : ultra.hotKey.displayName) : "关"
+                )
+                .help("随时按 \(ultra.hotKey.displayName) 打开此面板，可在详细设置中更改")
             }
 
             timeZoneModule
             announcementModule
             applicationsModule
-            footer
         }
-        .padding(12)
-        .frame(width: 320)
     }
 
     private var header: some View {
@@ -224,11 +279,32 @@ private struct ControlPanelContent: View {
                 Text("\(format(context.date, "M月d日 EEEE")) · \(settings.shortTimeZoneName(settings.effectiveTimeZone))")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text(lunarLabel(context.date))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    if ultra.showsWorkStatus {
+                        WorkStatusBadge(schedule: ultra.workSchedule, date: context.date)
+                    }
+                }
+                .padding(.top, 3)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 6)
             .padding(.top, 2)
         }
+    }
+
+    /// "农历八月初四 · 秋分" (term only on its day), by the clock's calendar day.
+    private func lunarLabel(_ date: Date) -> String {
+        let parts = WorldClockMath.calendar(in: settings.effectiveTimeZone).dateComponents([.year, .month, .day], from: date)
+        let year = parts.year ?? 2000
+        let month = parts.month ?? 1
+        let day = parts.day ?? 1
+        let lunar = LunarCalendar.lunarDate(year: year, month: month, day: day)
+        let term = SolarTerms.termName(year: year, month: month, day: day).map { " · \($0)" } ?? ""
+        return "农历\(lunar.monthName)\(lunar.dayName)\(term)"
     }
 
     // MARK: Time zone
@@ -340,6 +416,23 @@ private struct ControlPanelContent: View {
             .labelsHidden()
             .frame(maxWidth: .infinity)
             .disabled(!settings.announceTime)
+
+            HStack(spacing: 6) {
+                Toggle("勿扰", isOn: $ultra.quietHours.isEnabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .font(.system(size: 11))
+                    .help("这段时间内不报时（按菜单栏时钟的时区）")
+                Spacer(minLength: 4)
+                MinuteOfDayPicker(minuteOfDay: $ultra.quietHours.start)
+                    .controlSize(.small)
+                Text("–")
+                    .foregroundStyle(.secondary)
+                MinuteOfDayPicker(minuteOfDay: $ultra.quietHours.end)
+                    .controlSize(.small)
+            }
+            .disabled(!settings.announceTime)
+            .opacity(ultra.quietHours.isEnabled ? 1 : 0.6)
         }
         .padding(8)
         .moduleBackground()
@@ -506,9 +599,10 @@ private struct ControlPanelContent: View {
     // MARK: Footer
 
     private var footer: some View {
-        HStack {
+        HStack(spacing: 14) {
             Button("详细设置…", action: actions.openSettings)
             Spacer()
+            Button("检查更新…", action: actions.checkForUpdates)
             Button("退出", action: actions.quit)
         }
         .buttonStyle(.plain)
@@ -532,99 +626,5 @@ private struct ControlPanelContent: View {
         case .notApplied, .mismatched: return .orange
         case .notRunning, .unavailable: return nil
         }
-    }
-}
-
-private struct ToggleTile: View {
-    let title: String
-    let symbol: String
-    @Binding var isOn: Bool
-
-    var body: some View {
-        Button {
-            isOn.toggle()
-        } label: {
-            HStack(spacing: 8) {
-                ToggleCircle(symbol: symbol, isOn: isOn)
-                TileLabel(title: title, subtitle: isOn ? "开" : "关")
-                Spacer(minLength: 0)
-            }
-            .padding(8)
-            .moduleBackground()
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct ToggleCircle: View {
-    let symbol: String
-    let isOn: Bool
-
-    var body: some View {
-        Image(systemName: symbol)
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(isOn ? Color.white : Color.primary)
-            .frame(width: 28, height: 28)
-            .background(Circle().fill(isOn ? Color.accentColor : Color.primary.opacity(0.1)))
-            .animation(.easeOut(duration: 0.15), value: isOn)
-    }
-}
-
-private struct PillButton: View {
-    let title: String
-    let symbol: String?
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 3) {
-                if let symbol {
-                    Image(systemName: symbol)
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                Text(title)
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(Color.primary.opacity(0.08)))
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct TileLabel: View {
-    let title: String
-    let subtitle: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .lineLimit(1)
-            Text(subtitle)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-    }
-}
-
-private struct ModuleBackground: ViewModifier {
-    @Environment(\.colorScheme) private var colorScheme
-
-    func body(content: Content) -> some View {
-        content.background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white.opacity(colorScheme == .dark ? 0.08 : 0.45))
-        )
-    }
-}
-
-private extension View {
-    func moduleBackground() -> some View {
-        modifier(ModuleBackground())
     }
 }

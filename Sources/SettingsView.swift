@@ -3,142 +3,26 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var settings: ClockSettings
+    @ObservedObject var ultra = UltraSettings.shared
     let onDone: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    sectionTitle("时区")
-                    settingsCard {
-                        Toggle("使用系统时区", isOn: $settings.useSystemTimeZone)
-                        Divider()
-                        HStack {
-                            Text("自选时区")
-                            Spacer()
-                            TimeZoneSearchButton(
-                                settings: settings,
-                                identifier: settings.timeZoneIdentifier,
-                                onSelect: settings.selectClockTimeZone
-                            )
-                            .frame(width: 290)
-                        }
-                        .disabled(settings.useSystemTimeZone)
-                    }
-
-                    sectionTitle("应用时区白名单")
-                    settingsCard {
-                        HStack {
-                            Label("全局自动接管", systemImage: "bolt.fill")
-                            Spacer()
-                            Button(settings.allApplicationsAutomaticallyManaged ? "全部关闭" : "全部开启") {
-                                settings.setAutomaticLaunchManagementForAll(!settings.allApplicationsAutomaticallyManaged)
-                            }
-                            .disabled(settings.managedTimeZoneApps.isEmpty)
-                        }
-
-                        Divider()
-
-                        if settings.managedTimeZoneApps.isEmpty {
-                            VStack(spacing: 8) {
-                                Image(systemName: "clock.badge.questionmark")
-                                    .font(.title2)
-                                    .foregroundStyle(.secondary)
-                                Text("尚未添加应用")
-                                    .font(.headline)
-                                Text("添加后，从北京时间菜单启动它们即可使用独立时区。")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                        } else {
-                            ForEach($settings.managedTimeZoneApps) { $app in
-                                applicationRow(app: $app)
-                                if app.id != settings.managedTimeZoneApps.last?.id {
-                                    Divider().padding(.leading, 42)
-                                }
-                            }
-                        }
-
-                        Divider()
-                        HStack {
-                            Button {
-                                settings.chooseApplications()
-                            } label: {
-                                Label("添加应用…", systemImage: "plus")
-                            }
-                            Spacer()
-                            Text("可直接从 Dock 或访达打开，工具会自动接管")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    sectionTitle("日期")
-                    settingsCard {
-                        Toggle("显示日期", isOn: $settings.showDate)
-                        Divider()
-                        Toggle("显示星期", isOn: $settings.showWeekday)
-                    }
-
-                    sectionTitle("时间")
-                    settingsCard {
-                        Toggle("闪动时间分隔符", isOn: $settings.flashSeparators)
-                        Divider()
-                        Toggle("在时间中显示秒钟", isOn: $settings.showSeconds)
-                    }
-
-                    settingsCard {
-                        Toggle("语音报时", isOn: $settings.announceTime)
-                        Divider()
-
-                        HStack {
-                            Text("时间间隔")
-                            Spacer()
-                            Picker("", selection: $settings.announceInterval) {
-                                ForEach(settings.announceIntervalChoices, id: \.self) { interval in
-                                    Text(interval).tag(interval)
-                                }
-                            }
-                            .labelsHidden()
-                            .frame(width: 130)
-                        }
-                        .disabled(!settings.announceTime)
-
-                        Divider()
-
-                        HStack {
-                            Text("声音")
-                            Spacer()
-                            Picker("", selection: $settings.soundName) {
-                                ForEach(settings.soundChoices, id: \.self) { sound in
-                                    Text(sound).tag(sound)
-                                }
-                            }
-                            .labelsHidden()
-                            .frame(width: 130)
-                            .onChange(of: settings.soundName) { _, newValue in
-                                if newValue == "自定义…" && settings.customSoundPath.isEmpty {
-                                    settings.chooseCustomSound()
-                                }
-                            }
-                        }
-                        .disabled(!settings.announceTime)
-
-                        if settings.announceTime && settings.soundName == "自定义…" {
-                            HStack {
-                                Text(settings.customSoundPath.isEmpty ? "尚未选择音频" : URL(fileURLWithPath: settings.customSoundPath).lastPathComponent)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                Spacer()
-                                Button("自定义声音…") { settings.chooseCustomSound() }
-                            }
-                        }
-                    }
-                }
-                .padding(24)
+            TabView(selection: $ultra.panelTab) {
+                ScrollView { clockTab.padding(24) }
+                    .tabItem { Label(PanelTab.clock.title, systemImage: PanelTab.clock.symbolName) }
+                    .tag(PanelTab.clock)
+                ScrollView { WorldClockSettingsTab(settings: settings, ultra: ultra).padding(24) }
+                    .tabItem { Label(PanelTab.world.title, systemImage: PanelTab.world.symbolName) }
+                    .tag(PanelTab.world)
+                ScrollView { ScheduleSettingsTab(ultra: ultra).padding(24) }
+                    .tabItem { Label("日历与作息", systemImage: PanelTab.calendar.symbolName) }
+                    .tag(PanelTab.calendar)
+                ScrollView { AlarmSettingsTab(settings: settings, ultra: ultra).padding(24) }
+                    .tabItem { Label(PanelTab.alarms.title, systemImage: PanelTab.alarms.symbolName) }
+                    .tag(PanelTab.alarms)
             }
+            .padding(.top, 10)
 
             Divider()
             HStack {
@@ -152,20 +36,160 @@ struct SettingsView: View {
         .frame(width: 730, height: 760)
     }
 
-    @ViewBuilder
-    private func settingsCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        VStack(spacing: 12) {
-            content()
+    private var clockTab: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            GeneralSettingsCards(ultra: ultra)
+
+            sectionTitle("时区")
+            settingsCard {
+                Toggle("使用系统时区", isOn: $settings.useSystemTimeZone)
+                Divider()
+                HStack {
+                    Text("自选时区")
+                    Spacer()
+                    TimeZoneSearchButton(
+                        settings: settings,
+                        identifier: settings.timeZoneIdentifier,
+                        onSelect: settings.selectClockTimeZone
+                    )
+                    .frame(width: 290)
+                }
+                .disabled(settings.useSystemTimeZone)
+            }
+
+            sectionTitle("应用时区白名单")
+            settingsCard {
+                HStack {
+                    Label("全局自动接管", systemImage: "bolt.fill")
+                    Spacer()
+                    Button(settings.allApplicationsAutomaticallyManaged ? "全部关闭" : "全部开启") {
+                        settings.setAutomaticLaunchManagementForAll(!settings.allApplicationsAutomaticallyManaged)
+                    }
+                    .disabled(settings.managedTimeZoneApps.isEmpty)
+                }
+
+                Divider()
+
+                if settings.managedTimeZoneApps.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "clock.badge.questionmark")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                        Text("尚未添加应用")
+                            .font(.headline)
+                        Text("添加后，从北京时间菜单启动它们即可使用独立时区。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                } else {
+                    ForEach($settings.managedTimeZoneApps) { $app in
+                        applicationRow(app: $app)
+                        if app.id != settings.managedTimeZoneApps.last?.id {
+                            Divider().padding(.leading, 42)
+                        }
+                    }
+                }
+
+                Divider()
+                HStack {
+                    Button {
+                        settings.chooseApplications()
+                    } label: {
+                        Label("添加应用…", systemImage: "plus")
+                    }
+                    Spacer()
+                    Text("可直接从 Dock 或访达打开，工具会自动接管")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            sectionTitle("日期")
+            settingsCard {
+                Toggle("显示日期", isOn: $settings.showDate)
+                Divider()
+                Toggle("显示星期", isOn: $settings.showWeekday)
+            }
+
+            sectionTitle("时间")
+            settingsCard {
+                Toggle("闪动时间分隔符", isOn: $settings.flashSeparators)
+                Divider()
+                Toggle("在时间中显示秒钟", isOn: $settings.showSeconds)
+            }
+
+            settingsCard {
+                Toggle("语音报时", isOn: $settings.announceTime)
+                Divider()
+
+                HStack {
+                    Text("时间间隔")
+                    Spacer()
+                    Picker("", selection: $settings.announceInterval) {
+                        ForEach(settings.announceIntervalChoices, id: \.self) { interval in
+                            Text(interval).tag(interval)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 130)
+                }
+                .disabled(!settings.announceTime)
+
+                Divider()
+
+                HStack {
+                    Text("声音")
+                    Spacer()
+                    Picker("", selection: $settings.soundName) {
+                        ForEach(settings.soundChoices, id: \.self) { sound in
+                            Text(sound).tag(sound)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 130)
+                    .onChange(of: settings.soundName) { _, newValue in
+                        if newValue == "自定义…" && settings.customSoundPath.isEmpty {
+                            settings.chooseCustomSound()
+                        }
+                    }
+                }
+                .disabled(!settings.announceTime)
+
+                if settings.announceTime && settings.soundName == "自定义…" {
+                    HStack {
+                        Text(settings.customSoundPath.isEmpty ? "尚未选择音频" : URL(fileURLWithPath: settings.customSoundPath).lastPathComponent)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer()
+                        Button("自定义声音…") { settings.chooseCustomSound() }
+                    }
+                }
+
+                Divider()
+                HStack {
+                    Toggle("勿扰时段", isOn: $ultra.quietHours.isEnabled)
+                    Spacer()
+                    MinuteOfDayPicker(minuteOfDay: $ultra.quietHours.start)
+                    Text("至")
+                    MinuteOfDayPicker(minuteOfDay: $ultra.quietHours.end)
+                }
+                .disabled(!settings.announceTime)
+                Text("勿扰时段内不报时，按菜单栏时钟的时区计算，可跨越午夜。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
-        .padding(16)
-        .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func settingsCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        SettingsCard(content: content)
     }
 
     private func sectionTitle(_ title: String) -> some View {
-        Text(title)
-            .font(.title3.weight(.semibold))
-            .padding(.leading, 2)
-            .padding(.bottom, -12)
+        SettingsSectionTitle(title: title)
     }
 
     @ViewBuilder
@@ -232,7 +256,7 @@ struct SettingsView: View {
 }
 
 /// Button showing the chosen zone; opens a searchable list in a popover.
-private struct TimeZoneSearchButton: View {
+struct TimeZoneSearchButton: View {
     @ObservedObject var settings: ClockSettings
     let identifier: String
     let onSelect: (String) -> Void

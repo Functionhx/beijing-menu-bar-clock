@@ -1,5 +1,5 @@
 import AppKit
-import AVFoundation
+import Combine
 import SwiftUI
 
 @MainActor
@@ -8,7 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let menu = NSMenu()
     private let managedAppsMenu = NSMenu()
     private let settings = ClockSettings.shared
-    private let speech = AVSpeechSynthesizer()
+    private let ultra = UltraSettings.shared
+    private var hotKeySubscription: AnyCancellable?
     private var timer: Timer?
     private var settingsWindow: NSWindow?
     private lazy var controlPanel: ControlPanelController = {
@@ -30,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 chooseCustomSound: { [weak self] in
                     self?.runFromPanel { $0.chooseCustomSound() }
                 },
+                checkForUpdates: { [weak self] in self?.checkForUpdates() },
                 quit: { [weak self] in self?.quitApp() }
             )
         )
@@ -50,6 +52,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         configureMenu()
         settings.startMonitoringApplications()
         Updater.shared.start()
+        AlarmScheduler.shared.start()
+        LoginItem.shared.registerOnFirstInstalledLaunch()
+        GlobalHotKey.shared.action = { [weak self] in self?.toggleControlPanel() }
+        hotKeySubscription = ultra.$hotKey.sink { setting in
+            GlobalHotKey.shared.apply(setting)
+        }
         NotificationCenter.default.addObserver(
             forName: ClockSettings.changed,
             object: nil,
@@ -86,13 +94,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
 
+        if !controlPanel.justClosed {
+            toggleControlPanel()
+        }
+    }
+
+    /// Status item click and the global hotkey both land here.
+    private func toggleControlPanel() {
+        guard let button = statusItem.button else { return }
         if controlPanel.isOpen {
             controlPanel.close()
-        } else if !controlPanel.justClosed {
-            updateClock()
-            controlPanel.show(below: sender)
-            DispatchQueue.main.async { sender.highlight(true) }
+            return
         }
+        updateClock()
+        controlPanel.show(below: button)
+        DispatchQueue.main.async { button.highlight(true) }
     }
 
     private func configureMenu() {
@@ -164,6 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func announceIfNeeded(_ date: Date) {
         guard settings.announceTime else { return }
         let timeZone = settings.effectiveTimeZone
+        guard !ultra.quietHours.contains(date, in: timeZone) else { return }
         let calendar = Calendar(identifier: .gregorian)
         let values = calendar.dateComponents(in: timeZone, from: date)
         guard values.second == 0, let minute = values.minute, let hour = values.hour else { return }
@@ -180,21 +197,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard key != lastAnnouncementMinute else { return }
         lastAnnouncementMinute = key
 
-        playAnnouncementSound()
-        let utterance = AVSpeechUtterance(string: "现在是\(hour)点\(minute == 0 ? "整" : "\(minute)分")")
-        utterance.voice = AVSpeechSynthesisVoice(language: "zh-CN")
-        speech.speak(utterance)
-    }
-
-    private func playAnnouncementSound() {
-        switch settings.soundName {
-        case "无": return
-        case "自定义…":
-            guard !settings.customSoundPath.isEmpty else { return }
-            NSSound(contentsOfFile: settings.customSoundPath, byReference: true)?.play()
-        case "系统声音": NSSound(named: "Glass")?.play()
-        default: NSSound(named: settings.soundName)?.play()
-        }
+        Announcer.shared.playSound(for: settings)
+        Announcer.shared.speak("现在是\(Announcer.spokenTime(hour: hour, minute: minute))")
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -257,6 +261,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
+        // Keep time fields from grabbing focus (and a highlighted hour) when the window opens.
+        settingsWindow?.makeFirstResponder(nil)
     }
 
     @objc private func checkForUpdates() {
